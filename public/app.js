@@ -91,6 +91,10 @@ window.barcodeInput = barcodeInput;
 const pivotBody = document.getElementById("pivot-body");
 const detalleBody = document.getElementById("detalle-body");
 const yaRegistradosLista = document.getElementById("ya-registrados-lista");
+const resumenVariedadGlobalBox = document.getElementById("resumen-variedad-global-box");
+const nombreVariedadGlobal = document.getElementById("nombre-variedad-global");
+const totalTabacosVariedadGlobal = document.getElementById("total-tabacos-variedad-global");
+const totalTallosVariedadGlobal = document.getElementById("total-tallos-variedad-global");
 
 const contadorGeneralBd = document.getElementById("contador-general-bd");
 const contadorTallosGeneralBd = document.getElementById("contador-tallos-general-bd");
@@ -897,6 +901,15 @@ async function cargarViajes() {
   } catch (err) {
     console.error("Error cargando viajes:", err);
   }
+}
+function limpiarTotalesVariedadGlobal() {
+  setText(nombreVariedadGlobal, variedad);
+setText(totalTabacosVariedadGlobal, totalTabacos);
+setText(totalTallosVariedadGlobal, totalTallos);
+
+if (resumenVariedadGlobalBox) {
+  resumenVariedadGlobalBox.classList.remove("hidden");
+}
 }
 
 function iniciarAutoRefreshViaje() {
@@ -2252,8 +2265,14 @@ if (variedadGlobalSelect) {
   variedadGlobalSelect.addEventListener("change", async () => {
     const variedad = variedadGlobalSelect.value || "";
 
-    // Limpia los otros filtros para evitar confusión
+    if (!variedad) {
+      limpiarTotalesVariedadGlobal();
+      limpiarConsultaGeneral();
+      return;
+    }
+
     if (bloqueGeneralSelect) bloqueGeneralSelect.value = "";
+
     if (variedadGeneralSelect) {
       variedadGeneralSelect.innerHTML = `
         <option value="">Seleccionar variedad</option>
