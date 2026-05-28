@@ -79,6 +79,7 @@ const barcodeVisible = document.getElementById("barcode-visible");
 const cardDuplicados = document.getElementById("card-duplicados");
 const formInput = document.getElementById("form");
 const statusBar = document.getElementById("status-bar");
+const internetStatus = document.getElementById("internet-status");
 const resumenVariedadBody = document.getElementById("resumen-variedad-body");
 const viajeActivoLabel = document.getElementById("viaje-activo-label");
 const totalEscaneados = document.getElementById("total-escaneados");
@@ -2177,10 +2178,25 @@ async function activarViajeInicialAutomatico() {
 
   await activarViaje(nombreViaje);
 }
+function actualizarEstadoInternet() {
+  if (!internetStatus) return;
+
+  if (navigator.onLine) {
+    internetStatus.textContent = "En línea";
+    internetStatus.classList.remove("offline");
+    internetStatus.classList.add("online");
+  } else {
+    internetStatus.textContent = "Sin internet";
+    internetStatus.classList.remove("online");
+    internetStatus.classList.add("offline");
+  }
+}
 
 window.addEventListener("load", async () => {
 
   if (!pedirAcceso()) return;
+
+  actualizarEstadoInternet();
 
   setTimeout(() => {
     focusBarcodeSeguro();
@@ -2214,6 +2230,7 @@ window.addEventListener("load", async () => {
 });
 
 window.addEventListener("online", async () => {
+  actualizarEstadoInternet();
   setStatus("Internet recuperado. Sincronizando pendientes...", "warn");
 
   try {
@@ -2222,4 +2239,9 @@ window.addEventListener("online", async () => {
     console.error("Error sincronizando al volver internet:", err);
     setStatus("Error sincronizando registros pendientes", "error");
   }
+});
+
+window.addEventListener("offline", () => {
+  actualizarEstadoInternet();
+  setStatus("Sin internet. El sistema seguirá guardando en modo offline.", "warn");
 });

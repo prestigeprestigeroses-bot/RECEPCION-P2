@@ -7,6 +7,45 @@
 
   <style>
 
+    .header-panel-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.header-panel-texto h1 {
+  margin: 0;
+}
+
+.header-panel-texto p {
+  margin: 8px 0 0;
+}
+
+.internet-status {
+  min-width: 170px;
+  text-align: center;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-weight: 800;
+  font-size: 14px;
+  box-shadow: 0 8px 18px rgba(0,0,0,.18);
+  transition: all 0.25s ease;
+}
+
+.internet-status.online {
+  background: rgba(16, 185, 129, 0.18);
+  color: #7CFFC4;
+  border: 1px solid rgba(16, 185, 129, 0.45);
+}
+
+.internet-status.offline {
+  background: rgba(239, 68, 68, 0.18);
+  color: #FFD2D2;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+}
+
     /* Modal */
 .modal-overlay {
   position: fixed;
