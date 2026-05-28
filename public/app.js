@@ -2186,7 +2186,7 @@ function actualizarEstadoInternet() {
     internetStatus.classList.remove("offline");
     internetStatus.classList.add("online");
   } else {
-    internetStatus.textContent = "Sin internet";
+    internetStatus.textContent = "Sin internet - modo Offline";
     internetStatus.classList.remove("online");
     internetStatus.classList.add("offline");
   }
