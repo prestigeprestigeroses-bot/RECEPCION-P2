@@ -1466,6 +1466,102 @@ app.post("/api/registros/manual/quitar", async (req, res) => {
 // Para volver a ver registros anteriores del viaje
 // sin afectar los contadores de sesión
 // =====================================================
+app.get("/api/general/variedades", async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT DISTINCT variedad
+      FROM registros
+      WHERE variedad IS NOT NULL
+        AND variedad <> ''
+        AND created_at::date = CURRENT_DATE
+      ORDER BY variedad ASC
+    `);
+
+    res.json({
+      ok: true,
+      data: r.rows.map((x) => x.variedad)
+    });
+
+  } catch (err) {
+    console.error("Error cargando variedades generales:", err);
+    res.status(500).json({
+      ok: false,
+      error: err.message
+    });
+  }
+});
+app.get("/api/general/variedad/:variedad", async (req, res) => {
+  try {
+    const variedad = decodeURIComponent(req.params.variedad);
+
+    const r = await pool.query(`
+      SELECT
+        bloque,
+        variedad,
+        COALESCE(tamano, 'NA') AS tamano,
+        tallos,
+        COALESCE(etapa, 'Ingreso') AS etapa,
+        COUNT(*) AS tabacos,
+        SUM(COALESCE(tallos, 0)) AS suma_tallos
+      FROM registros
+      WHERE variedad = $1
+        AND created_at::date = CURRENT_DATE
+      GROUP BY bloque, variedad, COALESCE(tamano, 'NA'), tallos, COALESCE(etapa, 'Ingreso')
+      ORDER BY bloque ASC, variedad ASC, tamano ASC
+    `, [variedad]);
+
+    res.json({
+      ok: true,
+      data: r.rows
+    });
+
+  } catch (err) {
+    console.error("Error resumen variedad global:", err);
+    res.status(500).json({
+      ok: false,
+      error: err.message
+    });
+  }
+});
+app.get("/api/general/variedad/:variedad/detalle", async (req, res) => {
+  try {
+    const variedad = decodeURIComponent(req.params.variedad);
+
+    const r = await pool.query(`
+      SELECT
+        created_at,
+        barcode,
+        tipo,
+        serial,
+        variedad,
+        bloque,
+        tamano,
+        tallos,
+        etapa,
+        form,
+        barcode_origen,
+        es_reregistro
+      FROM registros
+      WHERE variedad = $1
+        AND created_at::date = CURRENT_DATE
+      ORDER BY created_at DESC
+      LIMIT 300
+    `, [variedad]);
+
+    res.json({
+      ok: true,
+      data: r.rows
+    });
+
+  } catch (err) {
+    console.error("Error detalle variedad global:", err);
+    res.status(500).json({
+      ok: false,
+      error: err.message
+    });
+  }
+});
+
 app.get("/api/viajes/:nombre/detalle-hoy", async (req, res) => {
   try {
     const nombre = decodeURIComponent(req.params.nombre);

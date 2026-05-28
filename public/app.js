@@ -96,6 +96,7 @@ const contadorGeneralBd = document.getElementById("contador-general-bd");
 const contadorTallosGeneralBd = document.getElementById("contador-tallos-general-bd");
 const bloqueGeneralSelect = document.getElementById("bloque-general-select");
 const variedadGeneralSelect = document.getElementById("variedad-general-select");
+const variedadGlobalSelect = document.getElementById("variedad-global-select");
 const generalBloqueBody = document.getElementById("general-bloque-body");
 const generalBloqueDetalleBody = document.getElementById("general-bloque-detalle-body");
 
@@ -497,6 +498,38 @@ async function cargarBloquesGenerales() {
     console.error("Error cargando bloques generales:", err);
   }
 }
+async function cargarVariedadesGlobales() {
+  if (!variedadGlobalSelect) return;
+
+  try {
+    const res = await fetch("/api/general/variedades");
+    if (!res.ok) return;
+
+    const json = await res.json();
+    if (!json.ok) return;
+
+    const seleccionada = variedadGlobalSelect.value || "";
+
+    variedadGlobalSelect.innerHTML = `
+      <option value="">Seleccionar variedad general</option>
+    `;
+
+    json.data.forEach((variedad) => {
+      const option = document.createElement("option");
+      option.value = variedad;
+      option.textContent = variedad;
+
+      if (String(variedad) === String(seleccionada)) {
+        option.selected = true;
+      }
+
+      variedadGlobalSelect.appendChild(option);
+    });
+
+  } catch (err) {
+    console.error("Error cargando variedades globales:", err);
+  }
+}
 
 async function cargarVariedadesGeneralesPorBloque(bloque, variedadSeleccionada = "") {
   if (!variedadGeneralSelect) return;
@@ -680,7 +713,154 @@ async function cargarDetalleGeneralPorBloque(bloque, variedad = "") {
     `);
   }
 }
+async function cargarResumenGeneralPorVariedadGlobal(variedad) {
+  if (!generalBloqueBody) return;
 
+  if (!variedad) {
+    limpiarConsultaGeneral();
+    return;
+  }
+
+  try {
+    const res = await fetch(
+      `/api/general/variedad/${encodeURIComponent(variedad)}`
+    );
+
+    if (!res.ok) {
+      setHTML(generalBloqueBody, `
+        <tr>
+          <td colspan="7" class="empty-row">Error cargando el resumen de la variedad.</td>
+        </tr>
+      `);
+      return;
+    }
+
+    const json = await res.json();
+
+    if (!json.ok || !json.data.length) {
+      setHTML(generalBloqueBody, `
+        <tr>
+          <td colspan="7" class="empty-row">No hay datos para esta variedad.</td>
+        </tr>
+      `);
+      return;
+    }
+
+    generalBloqueBody.innerHTML = "";
+
+    json.data.forEach((row) => {
+      const tr = document.createElement("tr");
+
+      tr.innerHTML = `
+        <td>${row.bloque ?? ""}</td>
+        <td>${row.variedad ?? ""}</td>
+        <td>${row.tamano ?? ""}</td>
+        <td>${row.tallos ?? ""}</td>
+        <td>${row.etapa ?? ""}</td>
+        <td class="cell-green">${row.tabacos ?? 0}</td>
+        <td class="cell-blue">${row.suma_tallos ?? 0}</td>
+      `;
+
+      generalBloqueBody.appendChild(tr);
+    });
+
+  } catch (err) {
+    console.error("Error cargando resumen por variedad global:", err);
+
+    setHTML(generalBloqueBody, `
+      <tr>
+        <td colspan="7" class="empty-row">Error cargando el resumen de la variedad.</td>
+      </tr>
+    `);
+  }
+}
+
+async function cargarDetalleGeneralPorVariedadGlobal(variedad) {
+  if (!generalBloqueDetalleBody) return;
+
+  if (!variedad) {
+    setHTML(generalBloqueDetalleBody, `
+      <tr>
+        <td colspan="13" class="empty-row">Sin datos para mostrar.</td>
+      </tr>
+    `);
+    return;
+  }
+
+  try {
+    const res = await fetch(
+      `/api/general/variedad/${encodeURIComponent(variedad)}/detalle`
+    );
+
+    if (!res.ok) {
+      setHTML(generalBloqueDetalleBody, `
+        <tr>
+          <td colspan="13" class="empty-row">Error cargando el detalle de la variedad.</td>
+        </tr>
+      `);
+      return;
+    }
+
+    const json = await res.json();
+
+    if (!json.ok || !json.data.length) {
+      setHTML(generalBloqueDetalleBody, `
+        <tr>
+          <td colspan="13" class="empty-row">No hay registros para esta variedad.</td>
+        </tr>
+      `);
+      return;
+    }
+
+    generalBloqueDetalleBody.innerHTML = "";
+
+    json.data.forEach((row) => {
+      const fecha = row.created_at
+        ? new Date(row.created_at).toLocaleString("es-CO")
+        : "";
+
+      const tr = document.createElement("tr");
+
+      tr.innerHTML = `
+        <td>${fecha}</td>
+        <td>${row.barcode ?? ""}</td>
+        <td>${row.tipo ?? ""}</td>
+        <td>${row.serial ?? ""}</td>
+        <td>${row.variedad ?? ""}</td>
+        <td>${row.bloque ?? ""}</td>
+        <td>${row.tamano ?? ""}</td>
+        <td>${row.tallos ?? ""}</td>
+        <td>${row.etapa ?? ""}</td>
+        <td>${row.form ?? ""}</td>
+        <td>${row.barcode_origen ?? ""}</td>
+        <td>${row.es_reregistro === true ? "Sí" : "No"}</td>
+        <td>
+          <button class="btn-delete-general" data-barcode="${row.barcode}">
+            Eliminar
+          </button>
+        </td>
+      `;
+
+      generalBloqueDetalleBody.appendChild(tr);
+    });
+
+    document.querySelectorAll(".btn-delete-general").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const barcode = btn.dataset.barcode;
+        await eliminarRegistroReal(barcode);
+      });
+    });
+
+  } catch (err) {
+    console.error("Error cargando detalle por variedad global:", err);
+
+    setHTML(generalBloqueDetalleBody, `
+      <tr>
+        <td colspan="13" class="empty-row">Error cargando el detalle de la variedad.</td>
+      </tr>
+    `);
+  }
+}
 async function cargarViajes() {
   const contenedor = document.getElementById("viajes-botones");
   if (!contenedor) return;
@@ -2068,6 +2248,26 @@ if (variedadGeneralSelect) {
     await cargarDetalleGeneralPorBloque(bloque, variedad);
   });
 }
+if (variedadGlobalSelect) {
+  variedadGlobalSelect.addEventListener("change", async () => {
+    const variedad = variedadGlobalSelect.value || "";
+
+    // Limpia los otros filtros para evitar confusión
+    if (bloqueGeneralSelect) bloqueGeneralSelect.value = "";
+    if (variedadGeneralSelect) {
+      variedadGeneralSelect.innerHTML = `
+        <option value="">Seleccionar variedad</option>
+      `;
+    }
+
+    guardarEstadoUI();
+
+    await conservarPosicionPantalla(async () => {
+      await cargarResumenGeneralPorVariedadGlobal(variedad);
+      await cargarDetalleGeneralPorVariedadGlobal(variedad);
+    });
+  });
+}
 /////////////////////// AUTOFOCUS ESCANER ///////////////////////////////
 
 function puedeRecuperarFoco() {
@@ -2214,8 +2414,9 @@ window.addEventListener("load", async () => {
   }, 1500);
 
   await cargarContadorGeneralBD();
-  await cargarBloquesGenerales();
-  await cargarViajes();
+await cargarBloquesGenerales();
+await cargarVariedadesGlobales();
+await cargarViajes();
 
   limpiarConsultaGeneral();
 
