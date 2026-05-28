@@ -1451,7 +1451,7 @@ function refrescarResumenPorVariedad() {
   if (!viajeActivo || !cacheDetalle.length) {
     resumenVariedadBody.innerHTML = `
       <tr>
-        <td colspan="6" class="empty-row">Sin registros por variedad.</td>
+        <td colspan="7" class="empty-row">Sin registros por variedad.</td>
       </tr>
     `;
     return;
@@ -1510,6 +1510,7 @@ function refrescarResumenPorVariedad() {
       <td>${item.bloque}</td>
       <td>${item.variedad}</td>
       <td>${item.tamano || "NA"}</td>
+      <td>${item.form || "-"}</td>
       <td class="cell-green">${item.tabacos}</td>
       <td class="cell-blue">${item.totalTallos}</td>
       <td>
