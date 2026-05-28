@@ -442,6 +442,8 @@ cacheYaRegistrados = [];
 }
 
 function limpiarConsultaGeneral() {
+  limpiarTotalesVariedadGlobal();
+
   setHTML(generalBloqueBody, `
     <tr>
       <td colspan="7" class="empty-row">Selecciona un bloque o variedad para consultar.</td>
@@ -721,6 +723,7 @@ async function cargarResumenGeneralPorVariedadGlobal(variedad) {
   if (!generalBloqueBody) return;
 
   if (!variedad) {
+    limpiarTotalesVariedadGlobal();
     limpiarConsultaGeneral();
     return;
   }
@@ -731,6 +734,8 @@ async function cargarResumenGeneralPorVariedadGlobal(variedad) {
     );
 
     if (!res.ok) {
+      limpiarTotalesVariedadGlobal();
+
       setHTML(generalBloqueBody, `
         <tr>
           <td colspan="7" class="empty-row">Error cargando el resumen de la variedad.</td>
@@ -741,7 +746,9 @@ async function cargarResumenGeneralPorVariedadGlobal(variedad) {
 
     const json = await res.json();
 
-    if (!json.ok || !json.data.length) {
+    if (!json.ok || !Array.isArray(json.data) || !json.data.length) {
+      limpiarTotalesVariedadGlobal();
+
       setHTML(generalBloqueBody, `
         <tr>
           <td colspan="7" class="empty-row">No hay datos para esta variedad.</td>
@@ -749,6 +756,16 @@ async function cargarResumenGeneralPorVariedadGlobal(variedad) {
       `);
       return;
     }
+
+    const totalTabacos = json.data.reduce((acc, row) => {
+      return acc + Number(row.tabacos || 0);
+    }, 0);
+
+    const totalTallos = json.data.reduce((acc, row) => {
+      return acc + Number(row.suma_tallos || 0);
+    }, 0);
+
+    mostrarTotalesVariedadGlobal(variedad, totalTabacos, totalTallos);
 
     generalBloqueBody.innerHTML = "";
 
@@ -770,6 +787,8 @@ async function cargarResumenGeneralPorVariedadGlobal(variedad) {
 
   } catch (err) {
     console.error("Error cargando resumen por variedad global:", err);
+
+    limpiarTotalesVariedadGlobal();
 
     setHTML(generalBloqueBody, `
       <tr>
@@ -903,13 +922,22 @@ async function cargarViajes() {
   }
 }
 function limpiarTotalesVariedadGlobal() {
-  setText(nombreVariedadGlobal, variedad);
-setText(totalTabacosVariedadGlobal, totalTabacos);
-setText(totalTallosVariedadGlobal, totalTallos);
+  setText(nombreVariedadGlobal, "Variedad");
+  setText(totalTabacosVariedadGlobal, 0);
+  setText(totalTallosVariedadGlobal, 0);
 
-if (resumenVariedadGlobalBox) {
-  resumenVariedadGlobalBox.classList.remove("hidden");
+  if (resumenVariedadGlobalBox) {
+    resumenVariedadGlobalBox.classList.add("hidden");
+  }
 }
+function mostrarTotalesVariedadGlobal(variedad, totalTabacos, totalTallos) {
+  setText(nombreVariedadGlobal, variedad || "Variedad");
+  setText(totalTabacosVariedadGlobal, totalTabacos || 0);
+  setText(totalTallosVariedadGlobal, totalTallos || 0);
+
+  if (resumenVariedadGlobalBox) {
+    resumenVariedadGlobalBox.classList.remove("hidden");
+  }
 }
 
 function iniciarAutoRefreshViaje() {
@@ -2219,21 +2247,32 @@ if (variedadGeneralSelect) {
     const bloque = bloqueGeneralSelect?.value || "";
     const variedad = variedadGeneralSelect.value;
 
+    limpiarTotalesVariedadGlobal();
+
+    if (variedadGlobalSelect) {
+      variedadGlobalSelect.value = "";
+    }
+
     guardarEstadoUI();
 
-    await conservarPosicionPantalla(async () => {
-      await cargarResumenGeneralPorBloque(bloque, variedad);
-      await cargarDetalleGeneralPorBloque(bloque, variedad);
-    });
+    await cargarResumenGeneralPorBloque(bloque, variedad);
+    await cargarDetalleGeneralPorBloque(bloque, variedad);
   });
 }
 if (bloqueGeneralSelect) {
-
   bloqueGeneralSelect.addEventListener("change", async () => {
-
     const bloque = bloqueGeneralSelect.value;
 
-    if (!bloque) return;
+    limpiarTotalesVariedadGlobal();
+
+    if (variedadGlobalSelect) {
+      variedadGlobalSelect.value = "";
+    }
+
+    if (!bloque) {
+      limpiarConsultaGeneral();
+      return;
+    }
 
     guardarEstadoUI();
 
@@ -2247,20 +2286,6 @@ if (bloqueGeneralSelect) {
     await cargarDetalleGeneralPorBloque(bloque, "");
   });
 }
-
-if (variedadGeneralSelect) {
-
-  variedadGeneralSelect.addEventListener("change", async () => {
-
-    const bloque = bloqueGeneralSelect?.value || "";
-    const variedad = variedadGeneralSelect.value;
-
-    guardarEstadoUI();
-
-    await cargarResumenGeneralPorBloque(bloque, variedad);
-    await cargarDetalleGeneralPorBloque(bloque, variedad);
-  });
-}
 if (variedadGlobalSelect) {
   variedadGlobalSelect.addEventListener("change", async () => {
     const variedad = variedadGlobalSelect.value || "";
@@ -2271,7 +2296,9 @@ if (variedadGlobalSelect) {
       return;
     }
 
-    if (bloqueGeneralSelect) bloqueGeneralSelect.value = "";
+    if (bloqueGeneralSelect) {
+      bloqueGeneralSelect.value = "";
+    }
 
     if (variedadGeneralSelect) {
       variedadGeneralSelect.innerHTML = `
