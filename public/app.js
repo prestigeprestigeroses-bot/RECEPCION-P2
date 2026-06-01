@@ -10,21 +10,7 @@ function bloquearScroll() {
 
 function restaurarScroll() {
   if (!scrollBloqueado) return;
-
-  const x = scrollX;
-  const y = scrollY;
-
   scrollBloqueado = false;
-
-  window.scrollTo(x, y);
-
-  requestAnimationFrame(() => {
-    window.scrollTo(x, y);
-  });
-
-  setTimeout(() => {
-    window.scrollTo(x, y);
-  }, 80);
 }
 
 /////////////////////// CLAVE ///////////////////////////////
@@ -57,6 +43,7 @@ let escaneando = false;
 let ultimoAcumulado = null;
 let mostrandoRegistrosHistoricos = false;
 let timerOcultarRegistrosHistoricos = null;
+let timerRefrescoPostEscaneo = null;
 
 let duplicadosSesionActual = 0;
 let erroresSesionActual = 0;
@@ -106,11 +93,20 @@ const generalBloqueDetalleBody = document.getElementById("general-bloque-detalle
 
 const btnToggleDetalleFiltro = document.getElementById("btnToggleDetalleFiltro");
 const detalleFiltroBox = document.getElementById("detalleFiltroBox");
+const btnToggleUltimosRegistros = document.getElementById("btnToggleUltimosRegistros");
+const ultimosRegistrosBox = document.getElementById("ultimosRegistrosBox");
 
 if (btnToggleDetalleFiltro && detalleFiltroBox) {
   btnToggleDetalleFiltro.addEventListener("click", () => {
     const isOpen = detalleFiltroBox.classList.toggle("open");
     btnToggleDetalleFiltro.textContent = isOpen ? "Ocultar detalle" : "Mostrar detalle";
+  });
+}
+
+if (btnToggleUltimosRegistros && ultimosRegistrosBox) {
+  btnToggleUltimosRegistros.addEventListener("click", () => {
+    const isHidden = ultimosRegistrosBox.classList.toggle("collapsed-panel");
+    btnToggleUltimosRegistros.textContent = isHidden ? "Mostrar" : "Ocultar";
   });
 }
 
@@ -122,13 +118,103 @@ function setText(el, value) {
 function setHTML(el, value) {
   if (el) el.innerHTML = value;
 }
+
+function programarRefrescoPostEscaneo() {
+  if (timerRefrescoPostEscaneo) {
+    clearTimeout(timerRefrescoPostEscaneo);
+  }
+
+  timerRefrescoPostEscaneo = setTimeout(() => {
+    timerRefrescoPostEscaneo = null;
+
+    conservarPosicionPantalla(async () => {
+      await refrescarResumenDesdeBD();
+      await refrescarPivot();
+      await cargarContadorGeneralBD();
+    });
+  }, 900);
+}
+
+function agregarRegistroProcesadoVisual(data, resultado) {
+  if (!data || !["OK", "REREGISTRADO"].includes(resultado)) return;
+
+  const row = {
+    fecha: new Date().toISOString(),
+    viaje: viajeActivo,
+    barcode: data.barcode || "",
+    tipo: data.tipo || "",
+    serial: data.serial || "",
+    bloque: data.bloque || "",
+    variedad: data.variedad || "",
+    tamano: data.tamano || "",
+    tallos: data.tallos || "",
+    etapa: data.etapa || "Ingreso",
+    form: data.form || formInput?.value?.trim() || "",
+    resultado,
+    observacion: data.observacion || "",
+    barcode_origen: data.barcode_origen || null,
+  };
+
+  cacheDetalle.unshift(row);
+  cacheDetalle = cacheDetalle.slice(0, 120);
+
+  if (!mostrandoRegistrosHistoricos) {
+    renderDetalle(cacheDetalle);
+    refrescarResumenPorVariedad();
+  }
+}
+
+function quitarRegistroVisualPorBarcode(barcode) {
+  const codigo = normalizarBarcode(barcode);
+  cacheDetalle = cacheDetalle.filter((row) => normalizarBarcode(row.barcode) !== codigo);
+
+  if (!mostrandoRegistrosHistoricos) {
+    renderDetalle(cacheDetalle);
+    refrescarResumenPorVariedad();
+  }
+}
+
+function quitarRegistroVisualPorGrupo(data) {
+  const index = cacheDetalle.findIndex((row) => {
+    if (!["OK", "REREGISTRADO", "OFFLINE"].includes(row.resultado)) return false;
+
+    return String(row.bloque || "") === String(data.bloque || "") &&
+      String(row.variedad || "") === String(data.variedad || "") &&
+      String(row.tamano || "") === String(data.tamano || "") &&
+      Number(row.tallos || 0) === Number(data.tallos || 0) &&
+      String(row.form || "") === String(data.form || "") &&
+      String(row.etapa || "Ingreso") === String(data.etapa || "Ingreso") &&
+      String(row.tipo || "") === String(data.tipo || "");
+  });
+
+  if (index >= 0) {
+    const eliminado = cacheDetalle.splice(index, 1)[0];
+
+    if (!mostrandoRegistrosHistoricos) {
+      renderDetalle(cacheDetalle);
+      refrescarResumenPorVariedad();
+    }
+
+    return eliminado;
+  }
+
+  refrescarResumenPorVariedad();
+  return null;
+}
+
+function normalizarBarcode(valor) {
+  return String(valor || "")
+    .replace(/[^A-Za-z0-9]/g, "")
+    .toUpperCase()
+    .trim();
+}
 // =====================================================
 // BASE LOCAL OFFLINE - INDEXEDDB
 // Guarda registros cuando no hay internet
 // =====================================================
 
 const OFFLINE_DB_NAME = "poscosecha_offline_db";
-const OFFLINE_DB_VERSION = 1;
+const OFFLINE_DB_VERSION = 2;
 const OFFLINE_STORE = "registros_pendientes";
 
 function abrirDBOffline() {
@@ -171,7 +257,10 @@ async function guardarRegistroOffline(payload) {
 
     const request = store.add(registro);
 
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => resolve({
+      ...registro,
+      id: request.result
+    });
     request.onerror = () => reject(request.error);
   });
 }
@@ -193,6 +282,18 @@ async function obtenerRegistrosOfflinePendientes() {
   });
 }
 
+async function obtenerRegistrosOfflinePendientesPorViaje(viaje) {
+  const pendientes = await obtenerRegistrosOfflinePendientes();
+  const viajeTexto = String(viaje || "").trim();
+
+  return pendientes.filter((item) => String(item.viaje || "").trim() === viajeTexto);
+}
+
+async function contarRegistrosOfflinePendientes(viaje) {
+  const pendientes = await obtenerRegistrosOfflinePendientesPorViaje(viaje);
+  return pendientes.length;
+}
+
 async function eliminarRegistroOffline(id) {
   const db = await abrirDBOffline();
 
@@ -209,18 +310,10 @@ async function eliminarRegistroOffline(id) {
 async function existeRegistroOfflinePendiente(barcode) {
   const pendientes = await obtenerRegistrosOfflinePendientes();
 
-  const codigo = String(barcode || "")
-    .replace(/[^A-Za-z0-9]/g, "")
-    .toUpperCase()
-    .trim();
+  const codigo = normalizarBarcode(barcode);
 
   return pendientes.some((item) => {
-    const itemBarcode = String(item.barcode || "")
-      .replace(/[^A-Za-z0-9]/g, "")
-      .toUpperCase()
-      .trim();
-
-    return itemBarcode === codigo;
+    return normalizarBarcode(item.barcode) === codigo;
   });
 }
 
@@ -240,6 +333,172 @@ function agregarRegistroOfflineVisual(payload) {
   cacheDetalle.unshift(row);
   renderDetalle(cacheDetalle);
 }
+const TIPOS_CACHE_KEY = "poscosecha_tipos_cache";
+
+function obtenerTiposCache() {
+  try {
+    return JSON.parse(localStorage.getItem(TIPOS_CACHE_KEY) || "{}");
+  } catch (err) {
+    return {};
+  }
+}
+
+function guardarTiposCache(data) {
+  const cache = {};
+
+  (data || []).forEach((row) => {
+    const tipo = String(row.tipo || "").toUpperCase().trim();
+    if (!tipo) return;
+    cache[tipo] = row;
+  });
+
+  localStorage.setItem(TIPOS_CACHE_KEY, JSON.stringify(cache));
+}
+
+async function cargarCatalogoTiposOffline() {
+  try {
+    const res = await fetch("/api/tipos-variedad");
+    if (!res.ok) return;
+
+    const json = await res.json();
+    if (!json.ok || !Array.isArray(json.data)) return;
+
+    guardarTiposCache(json.data);
+  } catch (err) {
+    console.warn("No se pudo actualizar el catalogo offline de tipos:", err);
+  }
+}
+
+function obtenerDatosOfflinePorBarcode(barcode) {
+  const codigo = normalizarBarcode(barcode);
+  const tipo = codigo.slice(0, 2);
+  const serial = codigo.slice(2);
+  const datos = obtenerTiposCache()[tipo] || {};
+
+  return {
+    tipo,
+    serial,
+    bloque: datos.bloque || "Pendiente",
+    variedad: datos.variedad || "Pendiente de sincronizar",
+    tamano: datos.tamano || "",
+    tallos: datos.tallos || "",
+  };
+}
+
+function crearFilaOfflineVisual(registro) {
+  const datos = obtenerDatosOfflinePorBarcode(registro.barcode);
+
+  return {
+    id_offline: registro.id,
+    fecha: registro.created_at_local || new Date().toISOString(),
+    viaje: registro.viaje || viajeActivo,
+    barcode: registro.barcode,
+    tipo: datos.tipo,
+    serial: datos.serial,
+    bloque: datos.bloque,
+    variedad: datos.variedad,
+    tamano: datos.tamano,
+    tallos: datos.tallos,
+    form: registro.form || "",
+    resultado: "OFFLINE",
+    observacion: "Guardado localmente. Se sincronizara cuando vuelva internet."
+  };
+}
+
+function agregarRegistroOfflineVisual(registro) {
+  const row = crearFilaOfflineVisual(registro);
+  const yaExiste = cacheDetalle.some((item) => {
+    if (row.id_offline && item.id_offline === row.id_offline) return true;
+
+    return normalizarBarcode(item.barcode) === normalizarBarcode(row.barcode) &&
+      item.resultado === "OFFLINE";
+  });
+
+  if (!yaExiste) {
+    cacheDetalle.unshift(row);
+  }
+
+  renderDetalle(cacheDetalle);
+  refrescarResumenPorVariedad();
+}
+
+async function pintarPendientesOfflineDelViaje() {
+  if (!viajeActivo) return [];
+
+  const pendientes = await obtenerRegistrosOfflinePendientesPorViaje(viajeActivo);
+  const filasOffline = pendientes
+    .sort((a, b) => new Date(b.created_at_local || 0) - new Date(a.created_at_local || 0))
+    .map(crearFilaOfflineVisual);
+
+  const barcodesOffline = new Set(filasOffline.map((row) => normalizarBarcode(row.barcode)));
+  const detalleServidor = cacheDetalle
+    .filter((row) => {
+      if (row.resultado !== "OFFLINE") return true;
+      return barcodesOffline.has(normalizarBarcode(row.barcode));
+    })
+    .filter((row) => row.resultado !== "OFFLINE");
+
+  cacheDetalle = [
+    ...filasOffline,
+    ...detalleServidor
+  ];
+
+  if (!mostrandoRegistrosHistoricos) {
+    renderDetalle(cacheDetalle);
+    refrescarResumenPorVariedad();
+  }
+
+  return pendientes;
+}
+
+async function actualizarTotalesConPendientesOffline(baseTotalActual = null, baseAcumuladoActual = null) {
+  if (!viajeActivo) return;
+
+  const pendientes = await contarRegistrosOfflinePendientes(viajeActivo);
+
+  if (baseTotalActual !== null) {
+    setText(totalEscaneados, Number(baseTotalActual || 0) + pendientes);
+  }
+
+  if (baseAcumuladoActual !== null) {
+    setAcumuladoSeguro(Number(baseAcumuladoActual || 0) + pendientes);
+  }
+}
+
+function contarRegistrosValidosDelViaje(data = []) {
+  return data.filter((row) => {
+    return ["OK", "REREGISTRADO", "OFFLINE"].includes(row.resultado);
+  }).length;
+}
+
+async function recalcularTotalesViajeDesdeDetalle() {
+  if (!viajeActivo) return;
+
+  try {
+    const res = await fetch(`/api/viajes/${encodeURIComponent(viajeActivo)}/detalle`);
+    const json = res.ok ? await res.json() : { data: [] };
+    const detalleBD = Array.isArray(json.data) ? json.data : [];
+    const pendientes = await obtenerRegistrosOfflinePendientesPorViaje(viajeActivo);
+    const detalleOffline = pendientes.map(crearFilaOfflineVisual);
+
+    cacheDetalle = [
+      ...detalleOffline,
+      ...detalleBD
+    ];
+
+    const totalReal = contarRegistrosValidosDelViaje(cacheDetalle);
+    setText(totalEscaneados, totalReal);
+    setAcumuladoSeguro(totalReal);
+
+    if (!mostrandoRegistrosHistoricos) {
+      renderDetalle(cacheDetalle);
+      refrescarResumenPorVariedad();
+    }
+  } catch (err) {
+    console.error("Error recalculando totales reales del viaje:", err);
+  }
+}
+
 async function sincronizarRegistrosOffline() {
   const pendientes = await obtenerRegistrosOfflinePendientes();
 
@@ -294,12 +553,17 @@ async function sincronizarRegistrosOffline() {
         await refrescarDetalle();
       }
 
+      await pintarPendientesOfflineDelViaje();
+
       await refrescarResumenDesdeBD();
+      await recalcularTotalesViajeDesdeDetalle();
       await cargarContadorGeneralBD();
     });
   }
 
   if (fallidos > 0) {
+    await pintarPendientesOfflineDelViaje();
+    await actualizarTotalesConPendientesOffline();
     setStatus(`Quedan registros pendientes por sincronizar`, "warn");
   }
 }
@@ -325,7 +589,7 @@ function focusBarcodeSeguro() {
       preventScroll: true
     });
   } catch (e) {
-    barcodeInput.focus();
+    // Evita focus sin preventScroll porque puede mover la pantalla.
   }
 }
 
@@ -334,27 +598,11 @@ function focusBarcodeSinScroll() {
 }
 
 function conservarPosicionPantalla(fn) {
-  const x = window.scrollX;
-  const y = window.scrollY;
-
   bloquearScroll();
 
   return Promise.resolve(fn())
     .finally(() => {
-      window.scrollTo(x, y);
-
-      requestAnimationFrame(() => {
-        window.scrollTo(x, y);
-      });
-
-      setTimeout(() => {
-        window.scrollTo(x, y);
-      }, 50);
-
-      setTimeout(() => {
-        window.scrollTo(x, y);
-        restaurarScroll();
-      }, 150);
+      restaurarScroll();
     });
 }
 
@@ -888,24 +1136,10 @@ async function cargarViajes() {
   const contenedor = document.getElementById("viajes-botones");
   if (!contenedor) return;
 
-  try {
-    const res = await fetch("/api/viajes");
-
-    if (!res.ok) {
-      contenedor.innerHTML = "";
-      return;
-    }
-
-    const json = await res.json();
-
-    if (!json.ok || !Array.isArray(json.data)) {
-      contenedor.innerHTML = "";
-      return;
-    }
-
+  const pintarBotones = (viajes) => {
     contenedor.innerHTML = "";
 
-    json.data.forEach((nombre) => {
+    viajes.forEach((nombre) => {
       const btn = document.createElement("button");
 
       btn.className = "btn-viaje";
@@ -917,8 +1151,27 @@ async function cargarViajes() {
 
       contenedor.appendChild(btn);
     });
+  };
+
+  try {
+    const res = await fetch("/api/viajes");
+
+    if (!res.ok) {
+      pintarBotones(Array.from({ length: 20 }, (_, i) => `Viaje ${i + 1}`));
+      return;
+    }
+
+    const json = await res.json();
+
+    if (!json.ok || !Array.isArray(json.data)) {
+      contenedor.innerHTML = "";
+      return;
+    }
+
+    pintarBotones(json.data);
   } catch (err) {
     console.error("Error cargando viajes:", err);
+    pintarBotones(Array.from({ length: 20 }, (_, i) => `Viaje ${i + 1}`));
   }
 }
 function limpiarTotalesVariedadGlobal() {
@@ -946,9 +1199,6 @@ function iniciarAutoRefreshViaje() {
   autoRefreshTimer = setInterval(async () => {
     if (!viajeActivo || scrollBloqueado || escaneando) return;
 
-    const x = window.scrollX;
-    const y = window.scrollY;
-
     await refrescarResumen();
 
 if (!mostrandoRegistrosHistoricos) {
@@ -966,12 +1216,6 @@ if (bloque) {
   await cargarResumenGeneralPorBloque(bloque, variedad);
   await cargarDetalleGeneralPorBloque(bloque, variedad);
 }
-
-    window.scrollTo(x, y);
-
-    requestAnimationFrame(() => {
-      window.scrollTo(x, y);
-    });
   }, 3000);
 }
 
@@ -1068,6 +1312,8 @@ pintarDuplicadosYErrores();
     }
 
     await conservarPosicionPantalla(async () => {
+      await refrescarResumen();
+      await pintarPendientesOfflineDelViaje();
       await refrescarResumenDesdeBD();
       await cargarContadorGeneralBD();
     });
@@ -1076,6 +1322,39 @@ pintarDuplicadosYErrores();
     iniciarAutoRefreshViaje();
   } catch (err) {
     console.error("Error activando viaje:", err);
+
+    if (!navigator.onLine) {
+      const viajeNombre = String(nombre || "").trim();
+
+      viajeActivo = viajeNombre;
+      guardarEstadoUI();
+      detenerAutoRefreshViaje();
+      mostrandoRegistrosHistoricos = false;
+
+      document.querySelectorAll(".btn-viaje").forEach((b) => {
+        b.classList.toggle("activo", b.textContent === viajeNombre);
+      });
+
+      setText(viajeActivoLabel, viajeNombre);
+      setText(totalEscaneados, 0);
+      setText(totalDuplicados, 0);
+      setText(totalErrores, 0);
+      setText(totalAcumuladoGeneral, 0);
+      actualizarAlertasResumen(0, 0);
+
+      cacheDetalle = [];
+      duplicadosSesionActual = 0;
+      erroresSesionActual = 0;
+      cacheYaRegistrados = [];
+      pintarDuplicadosYErrores();
+
+      await pintarPendientesOfflineDelViaje();
+      await actualizarTotalesConPendientesOffline(0, 0);
+
+      setStatus(`Viaje ${viajeNombre} activado en modo offline`, "warn");
+      return;
+    }
+
     setStatus("Error activando viaje", "error");
   }
 }
@@ -1127,10 +1406,7 @@ async function finalizarViaje() {
 
 async function escanearCodigo(barcode) {
   try {
-    const barcodeLimpio = String(barcode || "")
-      .replace(/[^A-Za-z0-9]/g, "")
-      .toUpperCase()
-      .trim();
+    const barcodeLimpio = normalizarBarcode(barcode);
 
     if (!viajeActivo) {
       setStatus("Debes activar un viaje antes de escanear", "warn");
@@ -1188,7 +1464,7 @@ async function escanearCodigo(barcode) {
         return;
       }
 
-      await guardarRegistroOffline(payload);
+      const registroOffline = await guardarRegistroOffline(payload);
 
       setStatus(`${barcodeLimpio} → GUARDADO OFFLINE`, "warn");
 
@@ -1198,7 +1474,7 @@ async function escanearCodigo(barcode) {
       const acumulado = Number(totalAcumuladoGeneral?.textContent || 0);
       setAcumuladoSeguro(acumulado + 1);
 
-      agregarRegistroOfflineVisual(payload);
+      agregarRegistroOfflineVisual(registroOffline);
 
       return;
     }
@@ -1228,6 +1504,7 @@ async function escanearCodigo(barcode) {
 
       const acumulado = Number(totalAcumuladoGeneral?.textContent || 0);
       setAcumuladoSeguro(acumulado + 1);
+      agregarRegistroProcesadoVisual(data.data, "OK");
 
     } else if (data.resultado === "YA_REGISTRADO") {
       duplicadosSesionActual += 1;
@@ -1258,6 +1535,7 @@ async function escanearCodigo(barcode) {
 
       const acumulado = Number(totalAcumuladoGeneral?.textContent || 0);
       setAcumuladoSeguro(acumulado + 1);
+      agregarRegistroProcesadoVisual(data.data, "REREGISTRADO");
 
     } else if (data.resultado === "NO_EXISTE") {
       erroresSesionActual += 1;
@@ -1269,19 +1547,7 @@ async function escanearCodigo(barcode) {
       setStatus(`Escaneo procesado: ${barcodeLimpio}`, "ok");
     }
 
-    setTimeout(() => {
-      conservarPosicionPantalla(async () => {
-        await refrescarResumen();
-        await refrescarPivot();
-
-        if (!mostrandoRegistrosHistoricos) {
-          await refrescarDetalle();
-        }
-
-        await refrescarResumenDesdeBD();
-        await cargarContadorGeneralBD();
-      });
-    }, 250);
+    programarRefrescoPostEscaneo();
 
   } catch (error) {
     console.error("Error escaneando:", error);
@@ -1346,7 +1612,7 @@ async function refrescarResumen() {
     const duplicados = json.sesionActual?.duplicados ?? 0;
     const errores = json.sesionActual?.errores ?? 0;
 
-    setText(totalEscaneados, okSesion + reregSesion);
+    await actualizarTotalesConPendientesOffline(okSesion + reregSesion);
     if (Number(duplicados || 0) > duplicadosSesionActual) {
   duplicadosSesionActual = Number(duplicados || 0);
 }
@@ -1379,7 +1645,7 @@ async function refrescarResumenDesdeBD() {
     const ok = Number(row.ok || 0);
     const rereg = Number(row.reregistrados || 0);
 
-    setAcumuladoSeguro(ok + rereg);
+    await actualizarTotalesConPendientesOffline(null, ok + rereg);
   } catch (err) {
     console.error("Error refrescando resumen DB:", err);
   }
@@ -1460,7 +1726,7 @@ function refrescarResumenPorVariedad() {
   const agrupado = {};
 
   cacheDetalle.forEach((row) => {
-    if (!["OK", "REREGISTRADO"].includes(row.resultado)) return;
+    if (!["OK", "REREGISTRADO", "OFFLINE"].includes(row.resultado)) return;
 
     const bloque = String(row.bloque || "N/A").trim();
     const variedad = String(row.variedad || "Sin variedad").trim();
@@ -1574,6 +1840,7 @@ function badgeResultado(resultado) {
   if (resultado === "YA_REGISTRADO") return `<span class="badge badge-dup">YA REGISTRADO</span>`;
   if (resultado === "NO_EXISTE") return `<span class="badge badge-bad">NO EXISTE</span>`;
   if (resultado === "REREGISTRADO") return `<span class="badge badge-ok">RE-REGISTRADO</span>`;
+  if (resultado === "OFFLINE") return `<span class="badge badge-offline">OFFLINE</span>`;
   return resultado || "";
 }
 
@@ -1630,7 +1897,9 @@ function renderDetalle(data) {
   visibles.forEach((row) => {
     const fecha = new Date(row.fecha).toLocaleString("es-CO");
 
-    let acciones = `<button class="btn-delete" data-barcode="${row.barcode}">Eliminar</button>`;
+    let acciones = row.resultado === "OFFLINE"
+      ? `<span class="badge badge-offline">Pendiente</span>`
+      : `<button class="btn-delete" data-barcode="${row.barcode}">Eliminar</button>`;
 
     if (row.resultado === "YA_REGISTRADO" && row.puede_reregistrar === true) {
       acciones += ` <button class="btn-primary btn-reregistrar-tabla" data-barcode="${row.barcode}">Re-registrar</button>`;
@@ -1645,7 +1914,7 @@ function renderDetalle(data) {
 
     tr.innerHTML = `
       <td>${fecha}</td>
-      <td>${viajeActivo}</td>
+      <td>${row.viaje || viajeActivo}</td>
       <td>${row.barcode ?? ""}</td>
       <td>${row.bloque ?? ""}</td>
       <td>${row.variedad ?? ""}</td>
@@ -1681,6 +1950,31 @@ async function agregarRegistroManualDesdeResumen(data) {
     return;
   }
 
+  const barcodeTemporal = `MANUAL-${Date.now()}`;
+  const actualAntes = Number(totalEscaneados?.textContent || 0);
+  const acumuladoAntes = Number(totalAcumuladoGeneral?.textContent || 0);
+
+  setText(totalEscaneados, actualAntes + 1);
+  setAcumuladoSeguro(acumuladoAntes + 1);
+
+  agregarRegistroProcesadoVisual({
+    barcode: barcodeTemporal,
+    tipo: data.tipo || "",
+    serial: "",
+    bloque: data.bloque,
+    variedad: data.variedad,
+    tamano: data.tamano,
+    tallos: data.tallos,
+    form: data.form,
+    etapa: data.etapa || "Ingreso",
+    observacion: "Agregando manualmente..."
+  }, "OK");
+
+  setStatus(
+    `Agregando: ${data.variedad} / ${data.tamano || "NA"} / ${data.tallos} tallos`,
+    "warn"
+  );
+
   try {
     const res = await fetch("/api/registros/manual", {
       method: "POST",
@@ -1702,6 +1996,9 @@ async function agregarRegistroManualDesdeResumen(data) {
     const json = await res.json();
 
     if (!res.ok || !json.ok) {
+      quitarRegistroVisualPorBarcode(barcodeTemporal);
+      setText(totalEscaneados, actualAntes);
+      setAcumuladoSeguro(acumuladoAntes);
       setStatus(json.error || "No se pudo agregar el registro manual", "error");
       return;
     }
@@ -1711,10 +2008,13 @@ async function agregarRegistroManualDesdeResumen(data) {
       "ok"
     );
 
-    await conservarPosicionPantalla(async () => {
-      await refrescarTodo();
-    });
+    quitarRegistroVisualPorBarcode(barcodeTemporal);
+    agregarRegistroProcesadoVisual(json.data, "OK");
+    programarRefrescoPostEscaneo();
   } catch (err) {
+    quitarRegistroVisualPorBarcode(barcodeTemporal);
+    setText(totalEscaneados, actualAntes);
+    setAcumuladoSeguro(acumuladoAntes);
     console.error("Error agregando registro manual:", err);
     setStatus("Error agregando registro manual", "error");
   }
@@ -1724,6 +2024,17 @@ async function quitarRegistroManualDesdeResumen(data) {
     setStatus("Debes activar un viaje antes de quitar registros", "warn");
     return;
   }
+
+  const actualAntes = Number(totalEscaneados?.textContent || 0);
+  const acumuladoAntes = Number(totalAcumuladoGeneral?.textContent || 0);
+  const eliminadoVisual = quitarRegistroVisualPorGrupo(data);
+
+  setText(totalEscaneados, Math.max(0, actualAntes - 1));
+  setAcumuladoSeguro(Math.max(0, acumuladoAntes - 1));
+  setStatus(
+    `Quitando: ${data.variedad} / ${data.tamano || "NA"} / ${data.tallos} tallos`,
+    "warn"
+  );
 
   try {
     const res = await fetch("/api/registros/manual/quitar", {
@@ -1746,32 +2057,34 @@ async function quitarRegistroManualDesdeResumen(data) {
     const json = await res.json();
 
     if (!res.ok || !json.ok) {
+      if (eliminadoVisual) {
+        cacheDetalle.unshift(eliminadoVisual);
+        renderDetalle(cacheDetalle);
+        refrescarResumenPorVariedad();
+      }
+
+      setText(totalEscaneados, actualAntes);
+      setAcumuladoSeguro(acumuladoAntes);
       setStatus(json.error || "No se pudo quitar el registro", "error");
       return;
     }
-
-    // Actualiza contador principal de inmediato
-    const actual = Number(totalEscaneados?.textContent || 0);
-    setText(totalEscaneados, Math.max(0, actual - 1));
-
-    // Actualiza acumulado de inmediato
-    const acumulado = Number(totalAcumuladoGeneral?.textContent || 0);
-    setAcumuladoSeguro(Math.max(0, acumulado - 1));
 
     setStatus(
       `Se quitó un tabaco: ${data.variedad} / ${data.tamano || "NA"} / ${data.tallos} tallos`,
       "ok"
     );
 
-    // Refresco real desde BD para actualizar tabla, totales y detalle
-    await conservarPosicionPantalla(async () => {
-      await refrescarDetalle();
-      await refrescarPivot();
-      await refrescarResumenDesdeBD();
-      await cargarContadorGeneralBD();
-    });
+    programarRefrescoPostEscaneo();
 
   } catch (err) {
+    if (eliminadoVisual) {
+      cacheDetalle.unshift(eliminadoVisual);
+      renderDetalle(cacheDetalle);
+      refrescarResumenPorVariedad();
+    }
+
+    setText(totalEscaneados, actualAntes);
+    setAcumuladoSeguro(acumuladoAntes);
     console.error("Error quitando registro manual:", err);
     setStatus("Error quitando registro manual", "error");
   }
@@ -1871,17 +2184,11 @@ async function procesarColaCodigos() {
   } finally {
     lectorProcesando = false;
     escaneando = false;
-
-    setTimeout(() => {
-      focusBarcodeSeguro();
-    }, 100);
   }
 }
 
 document.addEventListener("keydown", async (e) => {
   if (e.ctrlKey || e.altKey || e.metaKey) return;
-
-  if (usuarioEstaEditandoCampo()) return;
 
   const caracter = obtenerCaracterDesdeTecla(e);
 
@@ -1978,17 +2285,22 @@ if (barcodeInput) {
 
   try {
     const res = await fetch(`/api/viajes/${encodeURIComponent(viajeActivo)}/detalle`);
-    if (!res.ok) return;
+    if (!res.ok) {
+      await pintarPendientesOfflineDelViaje();
+      return;
+    }
 
     const json = await res.json();
 
     cacheDetalle = json.data || [];
+    await pintarPendientesOfflineDelViaje();
 
     renderDetalle(cacheDetalle);
     refrescarResumenPorVariedad();
 
   } catch (err) {
     console.error("Error refrescando detalle:", err);
+    await pintarPendientesOfflineDelViaje();
   }
 }
 
@@ -2107,6 +2419,10 @@ async function eliminarRegistroReal(barcode) {
 
     if (!json.ok) {
       setStatus(json.error || "No se pudo eliminar de la base de datos", "error");
+      await conservarPosicionPantalla(async () => {
+        await recalcularTotalesViajeDesdeDetalle();
+        await cargarContadorGeneralBD();
+      });
       return;
     }
 
@@ -2114,6 +2430,7 @@ async function eliminarRegistroReal(barcode) {
 
     await conservarPosicionPantalla(async () => {
       await refrescarTodo();
+      await recalcularTotalesViajeDesdeDetalle();
 
       const bloque = bloqueGeneralSelect?.value || "";
       const variedad = variedadGeneralSelect?.value || "";
@@ -2134,6 +2451,7 @@ async function refrescarTodo() {
   await refrescarPivot();
   await refrescarDetalle();
   await refrescarResumenDesdeBD();
+  await recalcularTotalesViajeDesdeDetalle();
   await cargarContadorGeneralBD();
 
   const bloqueSeleccionado = bloqueGeneralSelect?.value || "";
@@ -2346,7 +2664,7 @@ function puedeRecuperarFoco() {
 
 
 // CLICK GENERAL
-document.addEventListener("click", (e) => {
+if (false) document.addEventListener("click", (e) => {
 
   const target = e.target;
 
@@ -2382,7 +2700,7 @@ document.addEventListener("click", (e) => {
 });
 
 // AL VOLVER A LA PESTAÑA
-document.addEventListener("visibilitychange", () => {
+if (false) document.addEventListener("visibilitychange", () => {
 
   if (!document.hidden) {
 
@@ -2445,24 +2763,10 @@ window.addEventListener("load", async () => {
 
   actualizarEstadoInternet();
 
-  setTimeout(() => {
-    focusBarcodeSeguro();
-  }, 300);
-
-  setInterval(() => {
-
-    if (escaneando) return;
-    if (!puedeRecuperarFoco()) return;
-
-    if (document.activeElement !== barcodeInput) {
-      focusBarcodeSeguro();
-    }
-
-  }, 1500);
-
   await cargarContadorGeneralBD();
 await cargarBloquesGenerales();
 await cargarVariedadesGlobales();
+await cargarCatalogoTiposOffline();
 await cargarViajes();
 
   limpiarConsultaGeneral();
@@ -2482,6 +2786,7 @@ window.addEventListener("online", async () => {
   setStatus("Internet recuperado. Sincronizando pendientes...", "warn");
 
   try {
+    await cargarCatalogoTiposOffline();
     await sincronizarRegistrosOffline();
   } catch (err) {
     console.error("Error sincronizando al volver internet:", err);

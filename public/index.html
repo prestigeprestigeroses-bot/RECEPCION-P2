@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>INGRESO RECEPCION POSCO - P2</title>
+  <title>INGRESO RECEPCION POSCO - P1</title>
 
   <style>
 
@@ -961,6 +961,7 @@
       }
     }
   </style>
+  <link rel="stylesheet" href="styles.css">
 </head>
 
 <body>
@@ -981,7 +982,7 @@
       <aside class="sidebar">
         <div class="brand">
           <div class="brand-icon">P</div>
-          <div class="brand-title">Ingreso Recepción - P2</div>
+          <div class="brand-title">Ingreso Recepción - P1</div>
         </div>
 
         <nav class="nav">
@@ -999,7 +1000,7 @@
 
           <div class="topbar">
             <div>
-              <div class="page-title">INGRESO TABACOS RECEPCIÓN - P2</div>
+              <div class="page-title">INGRESO TABACOS RECEPCIÓN - P1</div>
               <div class="page-sub">Panel operativo de ingreso y consulta diaria</div>
             </div>
   <div id="internet-status" class="internet-status online">
@@ -1094,8 +1095,13 @@
           </section>
 
           <section class="card full-width" id="detalle">
-            <h2>Últimos registros escaneados</h2>
-            <div class="table-wrap">
+            <div class="section-header">
+              <h2>Últimos registros escaneados</h2>
+              <button id="btnToggleUltimosRegistros" class="toggleBtn" type="button">
+                Ocultar
+              </button>
+            </div>
+            <div id="ultimosRegistrosBox" class="table-wrap">
               <table>
                 <thead>
                   <tr>

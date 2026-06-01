@@ -653,6 +653,28 @@ app.get("/api/general/contador", async (_req, res) => {
   }
 });
 
+app.get("/api/tipos-variedad", async (_req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT
+        tipo,
+        variedad,
+        bloque,
+        tamano,
+        tallos
+      FROM tipos_variedad
+      ORDER BY tipo
+    `);
+
+    res.json({
+      ok: true,
+      data: r.rows,
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // =====================================================
 // BLOQUES
 // =====================================================

@@ -1,0 +1,455 @@
+:root {
+  --bg: #06281d;
+  --surface: #ffffff;
+  --surface-soft: #f7fafc;
+  --surface-strong: #e9f3ff;
+  --ink: #172033;
+  --ink-soft: #526173;
+  --line-soft: #d9e4ef;
+  --line-strong: #bfd1e3;
+  --brand: #1769aa;
+  --brand-dark: #0f4c81;
+  --brand-soft: #e4f2ff;
+  --success: #1f8a4c;
+  --success-soft: #e8f8ef;
+  --warning: #a56500;
+  --warning-soft: #fff4db;
+  --danger: #b42318;
+  --danger-soft: #ffebe9;
+  --radius: 8px;
+  --ui-scale: 1;
+}
+
+body {
+  background:
+    linear-gradient(180deg, #031a12 0%, #06281d 42%, #0b3a2b 100%),
+    var(--bg) !important;
+  color: var(--ink) !important;
+}
+
+.ui-scale-wrap {
+  transform: none !important;
+  width: 100% !important;
+  min-height: 100vh !important;
+}
+
+.sidebar,
+.card,
+.metric-card,
+.mini-stat,
+.card-ver-registros,
+.quick-help,
+.travel-card,
+.modal-box {
+  background: var(--surface) !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 2px 12px rgba(23, 32, 51, 0.07) !important;
+}
+
+.sidebar {
+  border-right: 1px solid var(--line-soft) !important;
+}
+
+.brand-title,
+.page-title,
+.card h2,
+.section-header h2,
+.modal-header h2,
+.field label,
+.section-title {
+  color: var(--ink) !important;
+}
+
+.page-sub,
+.section-kicker,
+.metric-label,
+.mini-stat .label,
+.travel-sub {
+  color: var(--ink-soft) !important;
+}
+
+.nav a {
+  color: var(--ink-soft) !important;
+  border-radius: var(--radius) !important;
+}
+
+.nav a:hover {
+  background: var(--brand-soft) !important;
+  color: var(--brand-dark) !important;
+}
+
+.nav a.active {
+  background: var(--brand) !important;
+  color: #ffffff !important;
+}
+
+.topbar {
+  background: rgba(6, 40, 29, 0.94);
+  border-bottom: 1px solid rgba(184, 231, 201, 0.22);
+  backdrop-filter: blur(12px);
+}
+
+.topbar .page-title {
+  color: #f4fff8 !important;
+}
+
+.topbar .page-sub {
+  color: #b8e7c9 !important;
+}
+
+.metric-card.main {
+  background: linear-gradient(135deg, var(--brand), #248bcb) !important;
+  color: #ffffff !important;
+}
+
+.metric-card.main .metric-label,
+.metric-card.main .metric-value,
+.metric-card.main .metric-sub {
+  color: #ffffff !important;
+}
+
+.travel-value,
+.mini-stat .value {
+  color: var(--success) !important;
+  text-shadow: none !important;
+}
+
+.field input,
+.field select,
+.scan-input {
+  background: #ffffff !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--line-strong) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: none !important;
+}
+
+button,
+.btn-primary,
+.btn-ver-registros,
+.btn-ocultar-registros,
+.btn-finalizar,
+.btn-viaje,
+.toggleBtn,
+.btn-add-manual,
+.btn-remove-manual,
+.btn-delete,
+.btn-delete-general {
+  border-radius: var(--radius) !important;
+  box-shadow: none !important;
+}
+
+.btn-primary,
+.btn-ver-registros {
+  background: var(--brand) !important;
+  color: #ffffff !important;
+}
+
+.btn-add-manual,
+.btn-viaje.activo {
+  background: var(--success) !important;
+  color: #ffffff !important;
+}
+
+.btn-finalizar,
+.btn-delete,
+.btn-delete-general,
+.btn-remove-manual {
+  background: var(--danger) !important;
+  color: #ffffff !important;
+}
+
+.table-wrap {
+  background: #ffffff !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--radius) !important;
+}
+
+thead,
+th {
+  background: var(--surface-strong) !important;
+}
+
+th,
+td {
+  color: var(--ink) !important;
+  border-bottom: 1px solid var(--line-soft) !important;
+}
+
+th {
+  color: var(--brand-dark) !important;
+}
+
+tbody tr:nth-child(even) {
+  background: #f9fbfd;
+}
+
+tbody tr:hover {
+  background: #eef7ff !important;
+}
+
+.cell-green,
+.badge-ok {
+  background: var(--success-soft) !important;
+  color: var(--success) !important;
+}
+
+.cell-blue,
+.badge-offline {
+  background: var(--brand-soft) !important;
+  color: var(--brand-dark) !important;
+}
+
+.badge-dup {
+  background: var(--warning-soft) !important;
+  color: var(--warning) !important;
+}
+
+.badge-bad {
+  background: var(--danger-soft) !important;
+  color: var(--danger) !important;
+}
+
+.internet-status.online,
+.status-ok {
+  background: var(--success-soft) !important;
+  color: var(--success) !important;
+  border-color: #b8e7c9 !important;
+}
+
+.internet-status.offline,
+.status-error {
+  background: var(--danger-soft) !important;
+  color: var(--danger) !important;
+  border-color: #ffc7c2 !important;
+}
+
+.status-warn {
+  background: var(--warning-soft) !important;
+  color: var(--warning) !important;
+  border-color: #f3cf78 !important;
+}
+
+/* Tema oscuro operativo */
+body {
+  background: linear-gradient(180deg, #02150f 0%, #06281d 45%, #0b3a2b 100%) !important;
+  color: #ecfdf5 !important;
+}
+
+.sidebar,
+.card,
+.metric-card,
+.mini-stat,
+.card-ver-registros,
+.quick-help,
+.travel-card,
+.modal-box,
+.table-wrap,
+.ya-registrado-item,
+.modal-dup-item {
+  background: #10251d !important;
+  color: #ecfdf5 !important;
+  border-color: rgba(134, 239, 172, 0.2) !important;
+}
+
+.card h2,
+.section-header h2,
+.modal-header h2,
+.field label,
+.section-title,
+.brand-title,
+.metric-value,
+.scanner-readout-value {
+  color: #f7fff9 !important;
+}
+
+.page-sub,
+.section-kicker,
+.metric-label,
+.mini-stat .label,
+.travel-sub,
+.empty-row,
+.modal-dup-meta {
+  color: #b8e7c9 !important;
+}
+
+.nav a {
+  color: #c7f9d4 !important;
+}
+
+.nav a:hover {
+  background: rgba(34, 197, 94, 0.18) !important;
+  color: #ffffff !important;
+}
+
+.nav a.active {
+  background: #1f8a4c !important;
+  color: #ffffff !important;
+}
+
+.field input,
+.field select,
+.scan-input {
+  background: #0b1f18 !important;
+  color: #f7fff9 !important;
+  border-color: rgba(134, 239, 172, 0.28) !important;
+}
+
+thead,
+th {
+  background: #153628 !important;
+}
+
+th {
+  color: #d9f99d !important;
+}
+
+td {
+  color: #f7fff9 !important;
+}
+
+tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.035) !important;
+}
+
+tbody tr:hover {
+  background: rgba(34, 197, 94, 0.12) !important;
+}
+
+.cell-green {
+  background: rgba(34, 197, 94, 0.18) !important;
+  color: #86efac !important;
+}
+
+.cell-blue {
+  background: rgba(56, 189, 248, 0.18) !important;
+  color: #bae6fd !important;
+}
+
+/* Tabla compacta de resumen: evita mover barra horizontal para ver + y - */
+#resumen .right-stack .table-wrap {
+  overflow-x: visible !important;
+}
+
+#resumen .right-stack table {
+  table-layout: fixed !important;
+  min-width: 0 !important;
+  width: 100% !important;
+}
+
+#resumen .right-stack th,
+#resumen .right-stack td {
+  white-space: normal !important;
+  padding: 10px 8px !important;
+  font-size: 0.9rem !important;
+}
+
+#resumen .right-stack th:nth-child(1),
+#resumen .right-stack td:nth-child(1) {
+  width: 12%;
+}
+
+#resumen .right-stack th:nth-child(2),
+#resumen .right-stack td:nth-child(2) {
+  width: 20%;
+}
+
+#resumen .right-stack th:nth-child(3),
+#resumen .right-stack td:nth-child(3),
+#resumen .right-stack th:nth-child(4),
+#resumen .right-stack td:nth-child(4) {
+  width: 12%;
+}
+
+#resumen .right-stack th:nth-child(5),
+#resumen .right-stack td:nth-child(5),
+#resumen .right-stack th:nth-child(6),
+#resumen .right-stack td:nth-child(6) {
+  width: 14%;
+  text-align: center;
+}
+
+#resumen .right-stack th:nth-child(7),
+#resumen .right-stack td:nth-child(7) {
+  width: 18%;
+  text-align: center;
+}
+
+#resumen .right-stack td:last-child {
+  white-space: nowrap !important;
+}
+
+#resumen .right-stack .btn-add-manual,
+#resumen .right-stack .btn-remove-manual {
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  min-height: 42px;
+  padding: 0 !important;
+  margin: 0 !important;
+  font-size: 1.25rem !important;
+}
+
+/* Correccion de contraste y acciones sin sobremontarse */
+th {
+  color: #f7fff9 !important;
+}
+
+.metric-label,
+.travel-label,
+.scanner-readout-label,
+.quick-help-item,
+.section-kicker,
+.page-sub,
+.travel-sub,
+.mini-stat .label,
+.empty-row {
+  color: #d7fbe1 !important;
+}
+
+.metric-value,
+.travel-value,
+.mini-stat .value,
+.cell-green,
+.cell-blue {
+  color: #ffffff !important;
+}
+
+.cell-green {
+  background: #14532d !important;
+}
+
+.cell-blue {
+  background: #164e63 !important;
+}
+
+.badge-ok,
+.badge-offline {
+  color: #ffffff !important;
+}
+
+#resumen .right-stack td:last-child .btn-add-manual,
+#resumen .right-stack td:last-child .btn-remove-manual {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+}
+
+#resumen .right-stack td:last-child .btn-add-manual {
+  margin-right: 8px !important;
+}
+
+.collapsed-panel {
+  display: none !important;
+}
+
+#detalle .section-header {
+  margin-bottom: 14px;
+}
+
+#detalle .section-header h2 {
+  margin: 0;
+}
