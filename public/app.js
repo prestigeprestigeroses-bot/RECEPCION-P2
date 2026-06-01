@@ -130,7 +130,7 @@ function programarRefrescoPostEscaneo() {
     conservarPosicionPantalla(async () => {
       await refrescarResumenDesdeBD();
       await refrescarPivot();
-      await cargarContadorGeneralBD();
+      await refrescarConsultaGeneralSeleccionada();
     });
   }, 900);
 }
@@ -1148,6 +1148,27 @@ async function cargarDetalleGeneralPorVariedadGlobal(variedad) {
     `);
   }
 }
+
+async function refrescarConsultaGeneralSeleccionada() {
+  await cargarContadorGeneralBD();
+
+  const variedadGlobal = variedadGlobalSelect?.value || "";
+  const bloque = bloqueGeneralSelect?.value || "";
+  const variedad = variedadGeneralSelect?.value || "";
+
+  if (variedadGlobal) {
+    await cargarResumenGeneralPorVariedadGlobal(variedadGlobal);
+    await cargarDetalleGeneralPorVariedadGlobal(variedadGlobal);
+    return;
+  }
+
+  if (bloque) {
+    await cargarVariedadesGeneralesPorBloque(bloque, variedad);
+    await cargarResumenGeneralPorBloque(bloque, variedad);
+    await cargarDetalleGeneralPorBloque(bloque, variedad);
+  }
+}
+
 async function cargarViajes() {
   const contenedor = document.getElementById("viajes-botones");
   if (!contenedor) return;
@@ -1223,15 +1244,7 @@ if (!mostrandoRegistrosHistoricos) {
 
 await refrescarPivot();
 await refrescarResumenDesdeBD();
-await cargarContadorGeneralBD();
-
-const bloque = bloqueGeneralSelect?.value || "";
-const variedad = variedadGeneralSelect?.value || "";
-
-if (bloque) {
-  await cargarResumenGeneralPorBloque(bloque, variedad);
-  await cargarDetalleGeneralPorBloque(bloque, variedad);
-}
+await refrescarConsultaGeneralSeleccionada();
   }, 3000);
 }
 
@@ -1331,7 +1344,7 @@ pintarDuplicadosYErrores();
       await refrescarResumen();
       await pintarPendientesOfflineDelViaje();
       await refrescarResumenDesdeBD();
-      await cargarContadorGeneralBD();
+      await refrescarConsultaGeneralSeleccionada();
     });
 
     setStatus(`Viaje ${viajeNombre} activado`, "ok");
@@ -2468,18 +2481,19 @@ async function refrescarTodo() {
   await refrescarDetalle();
   await refrescarResumenDesdeBD();
   await recalcularTotalesViajeDesdeDetalle();
-  await cargarContadorGeneralBD();
 
   const bloqueSeleccionado = bloqueGeneralSelect?.value || "";
   const variedadSeleccionada = variedadGeneralSelect?.value || "";
+  const variedadGlobalSeleccionada = variedadGlobalSelect?.value || "";
 
   await cargarBloquesGenerales();
+  await cargarVariedadesGlobales();
 
-  if (bloqueSeleccionado) {
+  if (!variedadGlobalSeleccionada && bloqueSeleccionado) {
     await cargarVariedadesGeneralesPorBloque(bloqueSeleccionado, variedadSeleccionada);
-    await cargarResumenGeneralPorBloque(bloqueSeleccionado, variedadSeleccionada);
-    await cargarDetalleGeneralPorBloque(bloqueSeleccionado, variedadSeleccionada);
   }
+
+  await refrescarConsultaGeneralSeleccionada();
 }
 
 function verDetalleFila(btn) {
