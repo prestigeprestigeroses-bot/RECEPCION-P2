@@ -721,6 +721,36 @@ function limpiarConsultaGeneral() {
   `);
 }
 
+function asegurarOpcionSelect(select, value) {
+  if (!select || value === undefined || value === null || value === "") return;
+
+  const texto = String(value);
+  const existe = Array.from(select.options).some((option) => {
+    return String(option.value) === texto;
+  });
+
+  if (existe) return;
+
+  const option = document.createElement("option");
+  option.value = texto;
+  option.textContent = texto;
+  select.appendChild(option);
+}
+
+function agregarRegistroAConsultaGeneralVisual(data) {
+  if (!data) return;
+
+  asegurarOpcionSelect(bloqueGeneralSelect, data.bloque);
+  asegurarOpcionSelect(variedadGlobalSelect, data.variedad);
+
+  if (
+    bloqueGeneralSelect?.value &&
+    String(bloqueGeneralSelect.value) === String(data.bloque || "")
+  ) {
+    asegurarOpcionSelect(variedadGeneralSelect, data.variedad);
+  }
+}
+
 async function cargarContadorGeneralBD() {
   try {
     const res = await fetch("/api/general/contador");
@@ -1151,6 +1181,8 @@ async function cargarDetalleGeneralPorVariedadGlobal(variedad) {
 
 async function refrescarConsultaGeneralSeleccionada() {
   await cargarContadorGeneralBD();
+  await cargarBloquesGenerales();
+  await cargarVariedadesGlobales();
 
   const variedadGlobal = variedadGlobalSelect?.value || "";
   const bloque = bloqueGeneralSelect?.value || "";
@@ -1166,6 +1198,11 @@ async function refrescarConsultaGeneralSeleccionada() {
     await cargarVariedadesGeneralesPorBloque(bloque, variedad);
     await cargarResumenGeneralPorBloque(bloque, variedad);
     await cargarDetalleGeneralPorBloque(bloque, variedad);
+    return;
+  }
+
+  if (variedadGeneralSelect) {
+    variedadGeneralSelect.innerHTML = `<option value="">Seleccionar variedad</option>`;
   }
 }
 
@@ -1534,6 +1571,7 @@ async function escanearCodigo(barcode) {
       const acumulado = Number(totalAcumuladoGeneral?.textContent || 0);
       setAcumuladoSeguro(acumulado + 1);
       agregarRegistroProcesadoVisual(data.data, "OK");
+      agregarRegistroAConsultaGeneralVisual(data.data);
 
     } else if (data.resultado === "YA_REGISTRADO") {
       duplicadosSesionActual += 1;
@@ -1565,6 +1603,7 @@ async function escanearCodigo(barcode) {
       const acumulado = Number(totalAcumuladoGeneral?.textContent || 0);
       setAcumuladoSeguro(acumulado + 1);
       agregarRegistroProcesadoVisual(data.data, "REREGISTRADO");
+      agregarRegistroAConsultaGeneralVisual(data.data);
 
     } else if (data.resultado === "NO_EXISTE") {
       erroresSesionActual += 1;
