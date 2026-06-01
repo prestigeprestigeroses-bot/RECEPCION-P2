@@ -2168,9 +2168,15 @@ async function quitarRegistroManualDesdeResumen(data) {
 let lectorBuffer = "";
 let lectorProcesando = false;
 let colaCodigos = [];
+let lectorAutoSubmitTimer = null;
 
 function limpiarLectorGlobal() {
   lectorBuffer = "";
+
+  if (lectorAutoSubmitTimer) {
+    clearTimeout(lectorAutoSubmitTimer);
+    lectorAutoSubmitTimer = null;
+  }
 
   if (barcodeInput) {
     barcodeInput.value = "";
@@ -2179,6 +2185,33 @@ function limpiarLectorGlobal() {
   if (barcodeVisible) {
     barcodeVisible.textContent = "Esperando escaneo...";
   }
+}
+
+function recibirCodigoDesdeLector(codigoRaw) {
+  const codigo = String(codigoRaw || "")
+    .replace(/[^A-Za-z0-9]/g, "")
+    .toUpperCase()
+    .trim();
+
+  if (!codigo) return;
+
+  limpiarLectorGlobal();
+  encolarCodigo(codigo);
+  setTimeout(focusBarcodeSeguro, 50);
+}
+
+function programarEnvioAutomaticoLector() {
+  if (lectorAutoSubmitTimer) {
+    clearTimeout(lectorAutoSubmitTimer);
+  }
+
+  lectorAutoSubmitTimer = setTimeout(() => {
+    lectorAutoSubmitTimer = null;
+
+    if (lectorBuffer.trim().length >= 2) {
+      recibirCodigoDesdeLector(lectorBuffer);
+    }
+  }, 450);
 }
 
 function mostrarLectorGlobal() {
@@ -2265,6 +2298,7 @@ if (caracter !== null) {
 
   lectorBuffer += caracter;
   mostrarLectorGlobal();
+  programarEnvioAutomaticoLector();
 
   return;
 }
@@ -2295,10 +2329,7 @@ if (caracter !== null) {
     e.preventDefault();
 
     const codigo = lectorBuffer || barcodeInput?.value || "";
-
-    limpiarLectorGlobal();
-
-    encolarCodigo(codigo);
+    recibirCodigoDesdeLector(codigo);
   }
 });
 
@@ -2313,6 +2344,7 @@ if (barcodeInput) {
     if (!valor) return;
 
     lectorBuffer = valor;
+    programarEnvioAutomaticoLector();
 
     if (barcodeVisible) {
       barcodeVisible.textContent = lectorBuffer;
@@ -2325,10 +2357,15 @@ if (barcodeInput) {
     e.preventDefault();
 
     const codigo = lectorBuffer || barcodeInput.value;
+    recibirCodigoDesdeLector(codigo);
+  });
 
-    limpiarLectorGlobal();
+  barcodeInput.addEventListener("paste", (e) => {
+    const textoPegado = e.clipboardData?.getData("text") || "";
+    if (!textoPegado) return;
 
-    encolarCodigo(codigo);
+    e.preventDefault();
+    recibirCodigoDesdeLector(textoPegado);
   });
 }async function refrescarDetalle() {
   if (!detalleBody) return;
@@ -2733,7 +2770,7 @@ function puedeRecuperarFoco() {
 
 
 // CLICK GENERAL
-if (false) document.addEventListener("click", (e) => {
+document.addEventListener("click", (e) => {
 
   const target = e.target;
 
@@ -2769,7 +2806,7 @@ if (false) document.addEventListener("click", (e) => {
 });
 
 // AL VOLVER A LA PESTAÑA
-if (false) document.addEventListener("visibilitychange", () => {
+document.addEventListener("visibilitychange", () => {
 
   if (!document.hidden) {
 
@@ -2782,6 +2819,20 @@ if (false) document.addEventListener("visibilitychange", () => {
     }, 300);
   }
 });
+
+window.addEventListener("focus", () => {
+  setTimeout(() => {
+    if (!escaneando) {
+      focusBarcodeSeguro();
+    }
+  }, 150);
+});
+
+setInterval(() => {
+  if (!escaneando && puedeRecuperarFoco()) {
+    focusBarcodeSeguro();
+  }
+}, 1000);
 
 async function activarViajeInicialAutomatico() {
   const contenedor = document.getElementById("viajes-botones");
@@ -2831,6 +2882,7 @@ window.addEventListener("load", async () => {
   if (!pedirAcceso()) return;
 
   actualizarEstadoInternet();
+  focusBarcodeSeguro();
 
   await cargarContadorGeneralBD();
 await cargarBloquesGenerales();
