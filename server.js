@@ -289,6 +289,18 @@ app.post("/api/escanear", async (req, res) => {
       });
     }
 
+    let codigoParseado;
+
+    try {
+      codigoParseado = parseCode(codeInput);
+    } catch (parseError) {
+      return res.status(400).json({
+        ok: false,
+        resultado: "CODIGO_INVALIDO",
+        error: parseError.message
+      });
+    }
+
     asegurarViaje(viajeNombre);
 
     await pool.query(`
@@ -300,9 +312,7 @@ app.post("/api/escanear", async (req, res) => {
         updated_at = NOW()
     `, [viajeNombre]);
 
-    const barcode = codeInput;
-    const tipo = codeInput.slice(0, 2);
-    const serial = codeInput.slice(2);
+    const { barcode, tipo, serial } = codigoParseado;
 
     const tipoRow = await pool.query(
       `

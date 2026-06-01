@@ -48,10 +48,24 @@ function asegurarViaje(nombre) {
 // HELPERS
 // =====================================================
 function parseCode(codeRaw) {
-  const code = String(codeRaw || "").trim();
+  const code = String(codeRaw || "")
+    .replace(/[^A-Za-z0-9]/g, "")
+    .toUpperCase()
+    .trim();
 
-  if (!/^\d{3,}$/.test(code)) {
+  const esNumero = /^\d{2,}$/.test(code);
+  const esLetraNumeroConSerial = /^[A-Z]\d+$/i.test(code);
+
+  if (!esNumero && !esLetraNumeroConSerial) {
     throw new Error("Barcode inválido");
+  }
+
+  if (esLetraNumeroConSerial) {
+    return {
+      barcode: code,
+      tipo: code.slice(0, 2),
+      serial: code.slice(2)
+    };
   }
 
   const tipo = code.slice(0, 2);

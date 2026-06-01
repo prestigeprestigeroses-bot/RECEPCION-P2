@@ -208,6 +208,23 @@ function normalizarBarcode(valor) {
     .toUpperCase()
     .trim();
 }
+
+function separarBarcode(barcode) {
+  const codigo = normalizarBarcode(barcode);
+  const tipoLetraNumero = codigo.match(/^([A-Z]\d)(\d*)$/);
+
+  if (tipoLetraNumero) {
+    return {
+      tipo: tipoLetraNumero[1],
+      serial: tipoLetraNumero[2] || ""
+    };
+  }
+
+  return {
+    tipo: codigo.slice(0, 2),
+    serial: codigo.slice(2)
+  };
+}
 // =====================================================
 // BASE LOCAL OFFLINE - INDEXEDDB
 // Guarda registros cuando no hay internet
@@ -371,8 +388,7 @@ async function cargarCatalogoTiposOffline() {
 
 function obtenerDatosOfflinePorBarcode(barcode) {
   const codigo = normalizarBarcode(barcode);
-  const tipo = codigo.slice(0, 2);
-  const serial = codigo.slice(2);
+  const { tipo, serial } = separarBarcode(codigo);
   const datos = obtenerTiposCache()[tipo] || {};
 
   return {
