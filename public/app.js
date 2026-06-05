@@ -44,6 +44,9 @@ let ultimoAcumulado = null;
 let mostrandoRegistrosHistoricos = false;
 let timerOcultarRegistrosHistoricos = null;
 let timerRefrescoPostEscaneo = null;
+let timerRefrescoConsultaGeneral = null;
+let resumenGeneralOperando = false;
+let sincronizandoOffline = false;
 
 let duplicadosSesionActual = 0;
 let erroresSesionActual = 0;
@@ -90,16 +93,46 @@ const variedadGeneralSelect = document.getElementById("variedad-general-select")
 const variedadGlobalSelect = document.getElementById("variedad-global-select");
 const generalBloqueBody = document.getElementById("general-bloque-body");
 const generalBloqueDetalleBody = document.getElementById("general-bloque-detalle-body");
+const totalTabacosFiltro = document.getElementById("total-tabacos-filtro");
+const totalTallosFiltro = document.getElementById("total-tallos-filtro");
 
 const btnToggleDetalleFiltro = document.getElementById("btnToggleDetalleFiltro");
 const detalleFiltroBox = document.getElementById("detalleFiltroBox");
 const btnToggleUltimosRegistros = document.getElementById("btnToggleUltimosRegistros");
 const ultimosRegistrosBox = document.getElementById("ultimosRegistrosBox");
 
+function detalleFiltroEstaAbierto() {
+  return !!detalleFiltroBox?.classList.contains("open");
+}
+
+function ultimosRegistrosEstaVisible() {
+  return !ultimosRegistrosBox || !ultimosRegistrosBox.classList.contains("collapsed-panel");
+}
+
+async function cargarDetalleFiltroActual() {
+  if (!detalleFiltroEstaAbierto()) return;
+
+  const variedadGlobalSeleccionada = variedadGlobalSelect?.value || "";
+  if (variedadGlobalSeleccionada) {
+    await cargarDetalleGeneralPorVariedadGlobal(variedadGlobalSeleccionada);
+    return;
+  }
+
+  const bloque = bloqueGeneralSelect?.value || "";
+  const variedad = variedadGeneralSelect?.value || "";
+  if (bloque) {
+    await cargarDetalleGeneralPorBloque(bloque, variedad);
+  }
+}
+
 if (btnToggleDetalleFiltro && detalleFiltroBox) {
-  btnToggleDetalleFiltro.addEventListener("click", () => {
+  btnToggleDetalleFiltro.addEventListener("click", async () => {
     const isOpen = detalleFiltroBox.classList.toggle("open");
     btnToggleDetalleFiltro.textContent = isOpen ? "Ocultar detalle" : "Mostrar detalle";
+
+    if (isOpen) {
+      await cargarDetalleFiltroActual();
+    }
   });
 }
 
@@ -119,6 +152,24 @@ function setHTML(el, value) {
   if (el) el.innerHTML = value;
 }
 
+async function fetchConTimeout(url, options = {}, timeoutMs = 8000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function esErrorTimeout(error) {
+  return error?.name === "AbortError";
+}
+
 function programarRefrescoPostEscaneo() {
   if (timerRefrescoPostEscaneo) {
     clearTimeout(timerRefrescoPostEscaneo);
@@ -130,13 +181,68 @@ function programarRefrescoPostEscaneo() {
     conservarPosicionPantalla(async () => {
       await refrescarResumenDesdeBD();
       await refrescarPivot();
-      await refrescarConsultaGeneralSeleccionada();
+      await cargarContadorGeneralBD();
+      programarRefrescoConsultaGeneral();
     });
   }, 900);
 }
 
+function programarRefrescoConsultaGeneral(delay = 700) {
+  if (timerRefrescoConsultaGeneral) {
+    clearTimeout(timerRefrescoConsultaGeneral);
+  }
+
+  timerRefrescoConsultaGeneral = setTimeout(async () => {
+    timerRefrescoConsultaGeneral = null;
+    await refrescarConsultaGeneralActual();
+  }, delay);
+}
+
+async function refrescarConsultaGeneralActual() {
+  const bloqueSeleccionado = bloqueGeneralSelect?.value || "";
+  const variedadSeleccionada = variedadGeneralSelect?.value || "";
+  const variedadGlobalSeleccionada = variedadGlobalSelect?.value || "";
+
+  await Promise.all([
+    cargarContadorGeneralBD(),
+    cargarBloquesGenerales(),
+    cargarVariedadesGlobales()
+  ]);
+
+  if (variedadGlobalSeleccionada) {
+    if (variedadGlobalSelect) {
+      variedadGlobalSelect.value = variedadGlobalSeleccionada;
+    }
+
+    await cargarResumenGeneralPorVariedadGlobal(variedadGlobalSeleccionada);
+    if (detalleFiltroEstaAbierto()) {
+      await cargarDetalleGeneralPorVariedadGlobal(variedadGlobalSeleccionada);
+    }
+    return;
+  }
+
+  if (bloqueSeleccionado) {
+    if (bloqueGeneralSelect) {
+      bloqueGeneralSelect.value = bloqueSeleccionado;
+    }
+
+    await cargarVariedadesGeneralesPorBloque(bloqueSeleccionado, variedadSeleccionada);
+
+    if (variedadGeneralSelect) {
+      variedadGeneralSelect.value = variedadSeleccionada;
+    }
+
+    await cargarResumenGeneralPorBloque(bloqueSeleccionado, variedadSeleccionada);
+    if (detalleFiltroEstaAbierto()) {
+      await cargarDetalleGeneralPorBloque(bloqueSeleccionado, variedadSeleccionada);
+    }
+  }
+}
+
 function agregarRegistroProcesadoVisual(data, resultado) {
   if (!data || !["OK", "REREGISTRADO"].includes(resultado)) return;
+
+  quitarRegistroPendienteVisual(data.barcode);
 
   const row = {
     fecha: new Date().toISOString(),
@@ -161,6 +267,66 @@ function agregarRegistroProcesadoVisual(data, resultado) {
   if (!mostrandoRegistrosHistoricos) {
     renderDetalle(cacheDetalle);
     refrescarResumenPorVariedad();
+  }
+}
+
+function agregarRegistroPendienteVisual(barcode, viajeRegistro) {
+  if (viajeRegistro !== viajeActivo || mostrandoRegistrosHistoricos) return;
+
+  const codigo = normalizarBarcode(barcode);
+  if (!codigo) return;
+
+  const yaExiste = cacheDetalle.some((row) => normalizarBarcode(row.barcode) === codigo);
+  if (yaExiste) return;
+
+  const datos = obtenerDatosOfflinePorBarcode(codigo);
+
+  cacheDetalle.unshift({
+    fecha: new Date().toISOString(),
+    viaje: viajeRegistro,
+    barcode: codigo,
+    tipo: datos.tipo || "",
+    serial: datos.serial || "",
+    bloque: datos.bloque || "Procesando",
+    variedad: datos.variedad || "Procesando",
+    tamano: datos.tamano || "",
+    tallos: datos.tallos || "",
+    etapa: "Ingreso",
+    form: formInput?.value?.trim() || "",
+    resultado: "PROCESANDO",
+    observacion: "Procesando registro..."
+  });
+
+  cacheDetalle = cacheDetalle.slice(0, 120);
+  renderDetalle(cacheDetalle);
+}
+
+function quitarRegistroPendienteVisual(barcode) {
+  const codigo = normalizarBarcode(barcode);
+  if (!codigo) return;
+
+  const antes = cacheDetalle.length;
+  cacheDetalle = cacheDetalle.filter((row) => {
+    return !(row.resultado === "PROCESANDO" && normalizarBarcode(row.barcode) === codigo);
+  });
+
+  if (antes !== cacheDetalle.length && !mostrandoRegistrosHistoricos) {
+    renderDetalle(cacheDetalle);
+  }
+}
+
+function actualizarRegistroPendienteVisual(barcode, observacion) {
+  const codigo = normalizarBarcode(barcode);
+  const row = cacheDetalle.find((item) => {
+    return item.resultado === "PROCESANDO" && normalizarBarcode(item.barcode) === codigo;
+  });
+
+  if (!row) return;
+
+  row.observacion = observacion;
+
+  if (!mostrandoRegistrosHistoricos) {
+    renderDetalle(cacheDetalle);
   }
 }
 
@@ -416,8 +582,8 @@ function crearFilaOfflineVisual(registro) {
     tamano: datos.tamano,
     tallos: datos.tallos,
     form: registro.form || "",
-    resultado: "OFFLINE",
-    observacion: "Guardado localmente. Se sincronizara cuando vuelva internet."
+    resultado: "LOCAL",
+    observacion: "Guardado localmente. Enviando a la base de datos."
   };
 }
 
@@ -427,7 +593,7 @@ function agregarRegistroOfflineVisual(registro) {
     if (row.id_offline && item.id_offline === row.id_offline) return true;
 
     return normalizarBarcode(item.barcode) === normalizarBarcode(row.barcode) &&
-      item.resultado === "OFFLINE";
+      ["OFFLINE", "LOCAL"].includes(item.resultado);
   });
 
   if (!yaExiste) {
@@ -442,17 +608,22 @@ async function pintarPendientesOfflineDelViaje() {
   if (!viajeActivo) return [];
 
   const pendientes = await obtenerRegistrosOfflinePendientesPorViaje(viajeActivo);
-  const filasOffline = pendientes
+  let filasOffline = pendientes
     .sort((a, b) => new Date(b.created_at_local || 0) - new Date(a.created_at_local || 0))
     .map(crearFilaOfflineVisual);
 
   const barcodesOffline = new Set(filasOffline.map((row) => normalizarBarcode(row.barcode)));
   const detalleServidor = cacheDetalle
     .filter((row) => {
-      if (row.resultado !== "OFFLINE") return true;
+      if (!["OFFLINE", "LOCAL"].includes(row.resultado)) return true;
       return barcodesOffline.has(normalizarBarcode(row.barcode));
     })
-    .filter((row) => row.resultado !== "OFFLINE");
+    .filter((row) => !["OFFLINE", "LOCAL"].includes(row.resultado));
+  const barcodesServidor = new Set(detalleServidor.map((row) => normalizarBarcode(row.barcode)));
+
+  filasOffline = filasOffline.filter((row) => {
+    return !barcodesServidor.has(normalizarBarcode(row.barcode));
+  });
 
   cacheDetalle = [
     ...filasOffline,
@@ -473,17 +644,29 @@ async function actualizarTotalesConPendientesOffline(baseTotalActual = null, bas
   const pendientes = await contarRegistrosOfflinePendientes(viajeActivo);
 
   if (baseTotalActual !== null) {
-    setText(totalEscaneados, Number(baseTotalActual || 0) + pendientes);
+    const base = Number(baseTotalActual || 0);
+    const actualPantalla = Number(totalEscaneados?.textContent || 0);
+    const total = sincronizandoOffline
+      ? Math.max(base, actualPantalla)
+      : base + pendientes;
+
+    setText(totalEscaneados, total);
   }
 
   if (baseAcumuladoActual !== null) {
-    setAcumuladoSeguro(Number(baseAcumuladoActual || 0) + pendientes);
+    const base = Number(baseAcumuladoActual || 0);
+    const actualPantalla = Number(totalAcumuladoGeneral?.textContent || 0);
+    const total = sincronizandoOffline
+      ? Math.max(base, actualPantalla)
+      : base + pendientes;
+
+    setAcumuladoSeguro(total);
   }
 }
 
 function contarRegistrosValidosDelViaje(data = []) {
   return data.filter((row) => {
-    return ["OK", "REREGISTRADO", "OFFLINE"].includes(row.resultado);
+    return ["OK", "REREGISTRADO", "OFFLINE", "LOCAL"].includes(row.resultado);
   }).length;
 }
 
@@ -495,7 +678,10 @@ async function recalcularTotalesViajeDesdeDetalle() {
     const json = res.ok ? await res.json() : { data: [] };
     const detalleBD = Array.isArray(json.data) ? json.data : [];
     const pendientes = await obtenerRegistrosOfflinePendientesPorViaje(viajeActivo);
-    const detalleOffline = pendientes.map(crearFilaOfflineVisual);
+    const barcodesBD = new Set(detalleBD.map((row) => normalizarBarcode(row.barcode)));
+    const detalleOffline = pendientes
+      .map(crearFilaOfflineVisual)
+      .filter((row) => !barcodesBD.has(normalizarBarcode(row.barcode)));
 
     cacheDetalle = [
       ...detalleOffline,
@@ -516,12 +702,15 @@ async function recalcularTotalesViajeDesdeDetalle() {
 }
 
 async function sincronizarRegistrosOffline() {
+  if (sincronizandoOffline) return;
+
   const pendientes = await obtenerRegistrosOfflinePendientes();
 
   if (!pendientes.length) {
     return;
   }
 
+  sincronizandoOffline = true;
   setStatus(`Sincronizando ${pendientes.length} registros pendientes...`, "warn");
 
   let sincronizados = 0;
@@ -529,7 +718,7 @@ async function sincronizarRegistrosOffline() {
 
   for (const item of pendientes) {
     try {
-      const res = await fetch("/api/escanear", {
+      const res = await fetchConTimeout("/api/escanear", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -539,13 +728,17 @@ async function sincronizarRegistrosOffline() {
           viaje: item.viaje,
           form: item.form || ""
         })
-      });
+      }, 12000);
 
       const json = await res.json();
 
       if (res.ok && json.ok !== false) {
         await eliminarRegistroOffline(item.id);
         sincronizados += 1;
+
+        if (json.resultado === "YA_REGISTRADO") {
+          agregarYaRegistradoPanel(json.data || {}, item.barcode);
+        }
       } else {
         fallidos += 1;
         console.warn("No se pudo sincronizar:", item, json);
@@ -557,6 +750,8 @@ async function sincronizarRegistrosOffline() {
       break;
     }
   }
+
+  sincronizandoOffline = false;
 
   if (sincronizados > 0) {
     setStatus(`Sincronizados ${sincronizados} registros pendientes`, "ok");
@@ -574,6 +769,7 @@ async function sincronizarRegistrosOffline() {
       await refrescarResumenDesdeBD();
       await recalcularTotalesViajeDesdeDetalle();
       await cargarContadorGeneralBD();
+      programarRefrescoConsultaGeneral(200);
     });
   }
 
@@ -581,6 +777,13 @@ async function sincronizarRegistrosOffline() {
     await pintarPendientesOfflineDelViaje();
     await actualizarTotalesConPendientesOffline();
     setStatus(`Quedan registros pendientes por sincronizar`, "warn");
+  }
+
+  const quedanPendientes = await obtenerRegistrosOfflinePendientes();
+  if (quedanPendientes.length && navigator.onLine) {
+    setTimeout(() => {
+      sincronizarRegistrosOffline();
+    }, 500);
   }
 }
 function setAcumuladoSeguro(valor) {
@@ -631,6 +834,37 @@ function pintarDuplicadosYErrores() {
   setText(totalDuplicados, duplicadosSesionActual);
   setText(totalErrores, erroresSesionActual);
   actualizarAlertasResumen(duplicadosSesionActual, erroresSesionActual);
+}
+
+function agregarYaRegistradoPanel(data = {}, fallbackBarcode = "") {
+  const barcode = data.barcode || fallbackBarcode;
+  const codigo = normalizarBarcode(barcode);
+
+  if (!codigo) return;
+
+  const yaExiste = cacheYaRegistrados.some((item) => {
+    return normalizarBarcode(item.barcode) === codigo;
+  });
+
+  if (yaExiste) return;
+
+  cacheYaRegistrados.unshift({
+    fecha: new Date().toISOString(),
+    barcode,
+    tipo: data.tipo || "",
+    serial: data.serial || "",
+    variedad: data.variedad || "",
+    bloque: data.bloque || "",
+    tamano: data.tamano || "",
+    tallos: data.tallos || "",
+    resultado: "YA_REGISTRADO",
+    observacion: data.observacion || "El barcode ya existe en registros"
+  });
+
+  cacheYaRegistrados = cacheYaRegistrados.slice(0, 50);
+  duplicadosSesionActual += 1;
+  pintarDuplicadosYErrores();
+  renderYaRegistrados();
 }
 
 function mantenerFoco() {
@@ -710,45 +944,16 @@ function limpiarConsultaGeneral() {
 
   setHTML(generalBloqueBody, `
     <tr>
-      <td colspan="7" class="empty-row">Selecciona un bloque o variedad para consultar.</td>
+      <td colspan="8" class="empty-row">Selecciona un bloque o variedad para consultar.</td>
     </tr>
   `);
+  limpiarTotalesResumenGeneral();
 
   setHTML(generalBloqueDetalleBody, `
     <tr>
       <td colspan="13" class="empty-row">Sin datos para mostrar.</td>
     </tr>
   `);
-}
-
-function asegurarOpcionSelect(select, value) {
-  if (!select || value === undefined || value === null || value === "") return;
-
-  const texto = String(value);
-  const existe = Array.from(select.options).some((option) => {
-    return String(option.value) === texto;
-  });
-
-  if (existe) return;
-
-  const option = document.createElement("option");
-  option.value = texto;
-  option.textContent = texto;
-  select.appendChild(option);
-}
-
-function agregarRegistroAConsultaGeneralVisual(data) {
-  if (!data) return;
-
-  asegurarOpcionSelect(bloqueGeneralSelect, data.bloque);
-  asegurarOpcionSelect(variedadGlobalSelect, data.variedad);
-
-  if (
-    bloqueGeneralSelect?.value &&
-    String(bloqueGeneralSelect.value) === String(data.bloque || "")
-  ) {
-    asegurarOpcionSelect(variedadGeneralSelect, data.variedad);
-  }
 }
 
 async function cargarContadorGeneralBD() {
@@ -865,10 +1070,158 @@ async function cargarVariedadesGeneralesPorBloque(bloque, variedadSeleccionada =
   }
 }
 
+function renderResumenGeneralFiltro(rows) {
+  if (!generalBloqueBody) return;
+  if (resumenGeneralOperando) return;
+
+  generalBloqueBody.innerHTML = "";
+
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    const tallos = Number(row.tallos || 0);
+
+    tr.innerHTML = `
+      <td>${row.bloque ?? ""}</td>
+      <td>${row.variedad ?? ""}</td>
+      <td>${row.tamano ?? ""}</td>
+      <td>${row.tallos ?? ""}</td>
+      <td>${row.etapa ?? ""}</td>
+      <td class="cell-green" data-general-tabacos>${row.tabacos ?? 0}</td>
+      <td class="cell-blue" data-general-suma>${row.suma_tallos ?? 0}</td>
+      <td>
+        <button
+          class="btn-add-general"
+          data-bloque="${row.bloque ?? ""}"
+          data-variedad="${row.variedad ?? ""}"
+          data-tamano="${row.tamano ?? ""}"
+          data-tallos="${tallos}"
+          data-etapa="${row.etapa || "Ingreso"}"
+          title="Agregar un registro igual"
+        >+</button>
+
+        <button
+          class="btn-remove-general"
+          data-bloque="${row.bloque ?? ""}"
+          data-variedad="${row.variedad ?? ""}"
+          data-tamano="${row.tamano ?? ""}"
+          data-tallos="${tallos}"
+          data-etapa="${row.etapa || "Ingreso"}"
+          title="Quitar un registro igual"
+        >-</button>
+      </td>
+    `;
+
+    generalBloqueBody.appendChild(tr);
+  });
+
+  conectarBotonesResumenGeneral();
+  actualizarTotalesResumenGeneral();
+}
+
+function ajustarFilaResumenGeneral(btn, delta) {
+  const tr = btn.closest("tr");
+  if (!tr) return;
+
+  const tabacosCell = tr.querySelector("[data-general-tabacos]");
+  const sumaCell = tr.querySelector("[data-general-suma]");
+  const tallos = Number(btn.dataset.tallos || 0);
+
+  if (tabacosCell) {
+    tabacosCell.textContent = Math.max(0, Number(tabacosCell.textContent || 0) + delta);
+  }
+
+  if (sumaCell) {
+    sumaCell.textContent = Math.max(0, Number(sumaCell.textContent || 0) + (delta * tallos));
+  }
+
+  actualizarTotalesResumenGeneral();
+}
+
+function actualizarTotalesResumenGeneral() {
+  if (!generalBloqueBody) return;
+
+  let totalTabacos = 0;
+  let totalTallos = 0;
+
+  generalBloqueBody.querySelectorAll("tr").forEach((tr) => {
+    const tabacosCell = tr.querySelector("[data-general-tabacos]");
+    const sumaCell = tr.querySelector("[data-general-suma]");
+
+    if (!tabacosCell || !sumaCell) return;
+
+    totalTabacos += Number(tabacosCell.textContent || 0);
+    totalTallos += Number(sumaCell.textContent || 0);
+  });
+
+  setText(totalTabacosFiltro, totalTabacos);
+  setText(totalTallosFiltro, totalTallos);
+}
+
+function limpiarTotalesResumenGeneral() {
+  setText(totalTabacosFiltro, 0);
+  setText(totalTallosFiltro, 0);
+}
+
+function datosResumenGeneralDesdeBoton(btn) {
+  return {
+    bloque: btn.dataset.bloque,
+    variedad: btn.dataset.variedad,
+    tamano: btn.dataset.tamano,
+    tallos: Number(btn.dataset.tallos || 0),
+    etapa: btn.dataset.etapa || "Ingreso",
+    form: "",
+    tipo: "",
+    scope: "general"
+  };
+}
+
+function conectarBotonesResumenGeneral() {
+  if (!generalBloqueBody) return;
+
+  generalBloqueBody.querySelectorAll(".btn-add-general").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (resumenGeneralOperando) return;
+      resumenGeneralOperando = true;
+      ajustarFilaResumenGeneral(btn, 1);
+      btn.disabled = true;
+
+      const ok = await agregarRegistroManualDesdeResumen(datosResumenGeneralDesdeBoton(btn));
+
+      if (!ok) {
+        ajustarFilaResumenGeneral(btn, -1);
+      }
+
+      btn.disabled = false;
+      resumenGeneralOperando = false;
+      await refrescarConsultaGeneralActual();
+    });
+  });
+
+  generalBloqueBody.querySelectorAll(".btn-remove-general").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (resumenGeneralOperando) return;
+      resumenGeneralOperando = true;
+      ajustarFilaResumenGeneral(btn, -1);
+      btn.disabled = true;
+
+      const ok = await quitarRegistroManualDesdeResumen(datosResumenGeneralDesdeBoton(btn));
+
+      if (!ok) {
+        ajustarFilaResumenGeneral(btn, 1);
+      }
+
+      btn.disabled = false;
+      resumenGeneralOperando = false;
+      await refrescarConsultaGeneralActual();
+    });
+  });
+}
+
 
 
 async function cargarResumenGeneralPorBloque(bloque, variedad = "") {
   if (!generalBloqueBody) return;
+  if (resumenGeneralOperando) return;
 
   if (!bloque) {
     limpiarConsultaGeneral();
@@ -883,9 +1236,10 @@ async function cargarResumenGeneralPorBloque(bloque, variedad = "") {
     const res = await fetch(url);
 
     if (!res.ok) {
+      limpiarTotalesResumenGeneral();
       setHTML(generalBloqueBody, `
         <tr>
-          <td colspan="7" class="empty-row">Error cargando el resumen del bloque.</td>
+          <td colspan="8" class="empty-row">Error cargando el resumen del bloque.</td>
         </tr>
       `);
       return;
@@ -894,35 +1248,21 @@ async function cargarResumenGeneralPorBloque(bloque, variedad = "") {
     const json = await res.json();
 
     if (!json.ok || !json.data.length) {
+      limpiarTotalesResumenGeneral();
       setHTML(generalBloqueBody, `
         <tr>
-          <td colspan="7" class="empty-row">No hay datos para este filtro.</td>
+          <td colspan="8" class="empty-row">No hay datos para este filtro.</td>
         </tr>
       `);
       return;
     }
 
-    generalBloqueBody.innerHTML = "";
-
-    json.data.forEach((row) => {
-      const tr = document.createElement("tr");
-
-      tr.innerHTML = `
-        <td>${row.bloque ?? ""}</td>
-        <td>${row.variedad ?? ""}</td>
-        <td>${row.tamano ?? ""}</td>
-        <td>${row.tallos ?? ""}</td>
-        <td>${row.etapa ?? ""}</td>
-        <td class="cell-green">${row.tabacos ?? 0}</td>
-        <td class="cell-blue">${row.suma_tallos ?? 0}</td>
-      `;
-
-      generalBloqueBody.appendChild(tr);
-    });
+    renderResumenGeneralFiltro(json.data);
   } catch (err) {
+    limpiarTotalesResumenGeneral();
     setHTML(generalBloqueBody, `
       <tr>
-        <td colspan="7" class="empty-row">Error cargando el resumen del bloque.</td>
+        <td colspan="8" class="empty-row">Error cargando el resumen del bloque.</td>
       </tr>
     `);
   }
@@ -930,6 +1270,7 @@ async function cargarResumenGeneralPorBloque(bloque, variedad = "") {
 
 async function cargarDetalleGeneralPorBloque(bloque, variedad = "") {
   if (!generalBloqueDetalleBody) return;
+  if (!detalleFiltroEstaAbierto()) return;
 
   if (!bloque) {
     setHTML(generalBloqueDetalleBody, `
@@ -1015,6 +1356,7 @@ async function cargarDetalleGeneralPorBloque(bloque, variedad = "") {
 }
 async function cargarResumenGeneralPorVariedadGlobal(variedad) {
   if (!generalBloqueBody) return;
+  if (resumenGeneralOperando) return;
 
   if (!variedad) {
     limpiarTotalesVariedadGlobal();
@@ -1029,10 +1371,11 @@ async function cargarResumenGeneralPorVariedadGlobal(variedad) {
 
     if (!res.ok) {
       limpiarTotalesVariedadGlobal();
+      limpiarTotalesResumenGeneral();
 
       setHTML(generalBloqueBody, `
         <tr>
-          <td colspan="7" class="empty-row">Error cargando el resumen de la variedad.</td>
+          <td colspan="8" class="empty-row">Error cargando el resumen de la variedad.</td>
         </tr>
       `);
       return;
@@ -1042,10 +1385,11 @@ async function cargarResumenGeneralPorVariedadGlobal(variedad) {
 
     if (!json.ok || !Array.isArray(json.data) || !json.data.length) {
       limpiarTotalesVariedadGlobal();
+      limpiarTotalesResumenGeneral();
 
       setHTML(generalBloqueBody, `
         <tr>
-          <td colspan="7" class="empty-row">No hay datos para esta variedad.</td>
+          <td colspan="8" class="empty-row">No hay datos para esta variedad.</td>
         </tr>
       `);
       return;
@@ -1061,32 +1405,17 @@ async function cargarResumenGeneralPorVariedadGlobal(variedad) {
 
     mostrarTotalesVariedadGlobal(variedad, totalTabacos, totalTallos);
 
-    generalBloqueBody.innerHTML = "";
-
-    json.data.forEach((row) => {
-      const tr = document.createElement("tr");
-
-      tr.innerHTML = `
-        <td>${row.bloque ?? ""}</td>
-        <td>${row.variedad ?? ""}</td>
-        <td>${row.tamano ?? ""}</td>
-        <td>${row.tallos ?? ""}</td>
-        <td>${row.etapa ?? ""}</td>
-        <td class="cell-green">${row.tabacos ?? 0}</td>
-        <td class="cell-blue">${row.suma_tallos ?? 0}</td>
-      `;
-
-      generalBloqueBody.appendChild(tr);
-    });
+    renderResumenGeneralFiltro(json.data);
 
   } catch (err) {
     console.error("Error cargando resumen por variedad global:", err);
 
     limpiarTotalesVariedadGlobal();
+    limpiarTotalesResumenGeneral();
 
     setHTML(generalBloqueBody, `
       <tr>
-        <td colspan="7" class="empty-row">Error cargando el resumen de la variedad.</td>
+        <td colspan="8" class="empty-row">Error cargando el resumen de la variedad.</td>
       </tr>
     `);
   }
@@ -1094,6 +1423,7 @@ async function cargarResumenGeneralPorVariedadGlobal(variedad) {
 
 async function cargarDetalleGeneralPorVariedadGlobal(variedad) {
   if (!generalBloqueDetalleBody) return;
+  if (!detalleFiltroEstaAbierto()) return;
 
   if (!variedad) {
     setHTML(generalBloqueDetalleBody, `
@@ -1178,34 +1508,6 @@ async function cargarDetalleGeneralPorVariedadGlobal(variedad) {
     `);
   }
 }
-
-async function refrescarConsultaGeneralSeleccionada() {
-  await cargarContadorGeneralBD();
-  await cargarBloquesGenerales();
-  await cargarVariedadesGlobales();
-
-  const variedadGlobal = variedadGlobalSelect?.value || "";
-  const bloque = bloqueGeneralSelect?.value || "";
-  const variedad = variedadGeneralSelect?.value || "";
-
-  if (variedadGlobal) {
-    await cargarResumenGeneralPorVariedadGlobal(variedadGlobal);
-    await cargarDetalleGeneralPorVariedadGlobal(variedadGlobal);
-    return;
-  }
-
-  if (bloque) {
-    await cargarVariedadesGeneralesPorBloque(bloque, variedad);
-    await cargarResumenGeneralPorBloque(bloque, variedad);
-    await cargarDetalleGeneralPorBloque(bloque, variedad);
-    return;
-  }
-
-  if (variedadGeneralSelect) {
-    variedadGeneralSelect.innerHTML = `<option value="">Seleccionar variedad</option>`;
-  }
-}
-
 async function cargarViajes() {
   const contenedor = document.getElementById("viajes-botones");
   if (!contenedor) return;
@@ -1273,16 +1575,30 @@ function iniciarAutoRefreshViaje() {
   autoRefreshTimer = setInterval(async () => {
     if (!viajeActivo || scrollBloqueado || escaneando) return;
 
-    await refrescarResumen();
+    const tareas = [
+      refrescarResumen(),
+      refrescarPivot(),
+      refrescarResumenDesdeBD(),
+      cargarContadorGeneralBD()
+    ];
 
-if (!mostrandoRegistrosHistoricos) {
-  await refrescarDetalle();
-}
+    if (!mostrandoRegistrosHistoricos && ultimosRegistrosEstaVisible()) {
+      tareas.push(refrescarDetalle());
+    }
 
-await refrescarPivot();
-await refrescarResumenDesdeBD();
-await refrescarConsultaGeneralSeleccionada();
-  }, 3000);
+    const bloque = bloqueGeneralSelect?.value || "";
+    const variedad = variedadGeneralSelect?.value || "";
+
+    if (bloque) {
+      tareas.push(cargarResumenGeneralPorBloque(bloque, variedad));
+
+      if (detalleFiltroEstaAbierto()) {
+        tareas.push(cargarDetalleGeneralPorBloque(bloque, variedad));
+      }
+    }
+
+    await Promise.all(tareas);
+  }, 6000);
 }
 
 function detenerAutoRefreshViaje() {
@@ -1381,7 +1697,7 @@ pintarDuplicadosYErrores();
       await refrescarResumen();
       await pintarPendientesOfflineDelViaje();
       await refrescarResumenDesdeBD();
-      await refrescarConsultaGeneralSeleccionada();
+      await cargarContadorGeneralBD();
     });
 
     setStatus(`Viaje ${viajeNombre} activado`, "ok");
@@ -1470,11 +1786,11 @@ async function finalizarViaje() {
   }
 }
 
-async function escanearCodigo(barcode) {
+async function escanearCodigo(barcode, viajeRegistro = viajeActivo) {
   try {
     const barcodeLimpio = normalizarBarcode(barcode);
 
-    if (!viajeActivo) {
+    if (!viajeRegistro) {
       setStatus("Debes activar un viaje antes de escanear", "warn");
       return;
     }
@@ -1486,28 +1802,46 @@ async function escanearCodigo(barcode) {
 
     const payload = {
       barcode: barcodeLimpio,
-      viaje: viajeActivo,
+      viaje: viajeRegistro,
       form: formInput?.value?.trim() || ""
     };
+    const mostrarEnPantallaActual = viajeRegistro === viajeActivo;
 
     let res = null;
     let data = null;
 
     try {
-      res = await fetch("/api/escanear", {
+      res = await fetchConTimeout("/api/escanear", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
         body: JSON.stringify(payload)
-      });
+      }, 8000);
 
       data = await res.json();
 
     } catch (networkError) {
+      if (navigator.onLine && esErrorTimeout(networkError)) {
+        actualizarRegistroPendienteVisual(
+          barcodeLimpio,
+          "Servidor lento. Reintentando registro automatico..."
+        );
+        setStatus(`${barcodeLimpio} pendiente por respuesta lenta. Reintentando...`, "warn");
+        programarEscaneoForzado(payload);
+        return;
+      }
+
       const yaExisteOffline = await existeRegistroOfflinePendiente(barcodeLimpio);
 
       if (yaExisteOffline) {
+        quitarRegistroPendienteVisual(barcodeLimpio);
+
+        if (!mostrarEnPantallaActual) {
+          setStatus(`${barcodeLimpio} procesado para ${viajeRegistro}`, "ok");
+          return;
+        }
+
         duplicadosSesionActual += 1;
 
         cacheYaRegistrados.unshift({
@@ -1534,12 +1868,18 @@ async function escanearCodigo(barcode) {
 
       setStatus(`${barcodeLimpio} → GUARDADO OFFLINE`, "warn");
 
+      if (!mostrarEnPantallaActual) {
+        quitarRegistroPendienteVisual(barcodeLimpio);
+        return;
+      }
+
       const actual = Number(totalEscaneados?.textContent || 0);
       setText(totalEscaneados, actual + 1);
 
       const acumulado = Number(totalAcumuladoGeneral?.textContent || 0);
       setAcumuladoSeguro(acumulado + 1);
 
+      quitarRegistroPendienteVisual(barcodeLimpio);
       agregarRegistroOfflineVisual(registroOffline);
 
       return;
@@ -1554,11 +1894,19 @@ async function escanearCodigo(barcode) {
 
       setStatus(`${barcodeLimpio} → ${mensaje}`, "error");
 
+      quitarRegistroPendienteVisual(barcodeLimpio);
+
       console.error(
         "Error backend /api/escanear:",
         JSON.stringify(data, null, 2)
       );
 
+      return;
+    }
+
+    if (!mostrarEnPantallaActual) {
+      quitarRegistroPendienteVisual(barcodeLimpio);
+      setStatus(`${barcodeLimpio} procesado para ${viajeRegistro}`, "ok");
       return;
     }
 
@@ -1571,9 +1919,9 @@ async function escanearCodigo(barcode) {
       const acumulado = Number(totalAcumuladoGeneral?.textContent || 0);
       setAcumuladoSeguro(acumulado + 1);
       agregarRegistroProcesadoVisual(data.data, "OK");
-      agregarRegistroAConsultaGeneralVisual(data.data);
 
     } else if (data.resultado === "YA_REGISTRADO") {
+      quitarRegistroPendienteVisual(barcodeLimpio);
       duplicadosSesionActual += 1;
 
       cacheYaRegistrados.unshift({
@@ -1603,15 +1951,16 @@ async function escanearCodigo(barcode) {
       const acumulado = Number(totalAcumuladoGeneral?.textContent || 0);
       setAcumuladoSeguro(acumulado + 1);
       agregarRegistroProcesadoVisual(data.data, "REREGISTRADO");
-      agregarRegistroAConsultaGeneralVisual(data.data);
 
     } else if (data.resultado === "NO_EXISTE") {
+      quitarRegistroPendienteVisual(barcodeLimpio);
       erroresSesionActual += 1;
       pintarDuplicadosYErrores();
 
       setStatus(`${barcodeLimpio} → NO EXISTE`, "error");
 
     } else {
+      quitarRegistroPendienteVisual(barcodeLimpio);
       setStatus(`Escaneo procesado: ${barcodeLimpio}`, "ok");
     }
 
@@ -1619,7 +1968,112 @@ async function escanearCodigo(barcode) {
 
   } catch (error) {
     console.error("Error escaneando:", error);
+    quitarRegistroPendienteVisual(barcode);
     setStatus("Error escaneando", "error");
+  }
+}
+
+function programarEscaneoForzado(payload, intento = 1) {
+  const delay = Math.min(1500 * intento, 6000);
+
+  setTimeout(() => {
+    confirmarEscaneoPendiente(payload, intento);
+  }, delay);
+}
+
+async function confirmarEscaneoPendiente(payload, intento = 1) {
+  const barcodeLimpio = normalizarBarcode(payload?.barcode);
+  const viajeRegistro = String(payload?.viaje || "").trim();
+  const mostrarEnPantallaActual = viajeRegistro === viajeActivo;
+
+  if (!barcodeLimpio || !viajeRegistro) return;
+
+  if (!navigator.onLine) {
+    try {
+      const registroOffline = await guardarRegistroOffline(payload);
+      quitarRegistroPendienteVisual(barcodeLimpio);
+
+      if (mostrarEnPantallaActual) {
+        agregarRegistroOfflineVisual(registroOffline);
+      }
+    } catch (err) {
+      actualizarRegistroPendienteVisual(barcodeLimpio, "Sin internet. Pendiente de guardado local.");
+    }
+
+    return;
+  }
+
+  actualizarRegistroPendienteVisual(
+    barcodeLimpio,
+    `Reintentando registro automatico (${intento}/5)...`
+  );
+
+  try {
+    const res = await fetchConTimeout("/api/escanear", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    }, 12000);
+
+    const data = await res.json();
+
+    if (!res.ok || !data || data.ok === false) {
+      throw new Error(data?.error || data?.mensaje || "No se pudo confirmar el registro");
+    }
+
+    if (data.resultado === "OK" || data.resultado === "REREGISTRADO") {
+      if (mostrarEnPantallaActual) {
+        const actual = Number(totalEscaneados?.textContent || 0);
+        setText(totalEscaneados, actual + 1);
+
+        const acumulado = Number(totalAcumuladoGeneral?.textContent || 0);
+        setAcumuladoSeguro(acumulado + 1);
+
+        agregarRegistroProcesadoVisual(data.data, data.resultado);
+      } else {
+        quitarRegistroPendienteVisual(barcodeLimpio);
+      }
+
+      setStatus(`${barcodeLimpio} registrado automaticamente`, "ok");
+      programarRefrescoPostEscaneo();
+      return;
+    }
+
+    if (data.resultado === "YA_REGISTRADO") {
+      quitarRegistroPendienteVisual(barcodeLimpio);
+
+      if (mostrarEnPantallaActual) {
+        await recalcularTotalesViajeDesdeDetalle();
+      }
+
+      setStatus(`${barcodeLimpio} ya estaba confirmado en la base`, "ok");
+      programarRefrescoPostEscaneo();
+      return;
+    }
+
+    if (data.resultado === "NO_EXISTE") {
+      quitarRegistroPendienteVisual(barcodeLimpio);
+      erroresSesionActual += 1;
+      pintarDuplicadosYErrores();
+      setStatus(`${barcodeLimpio} no existe`, "error");
+      return;
+    }
+
+    quitarRegistroPendienteVisual(barcodeLimpio);
+    setStatus(`${barcodeLimpio} procesado`, "ok");
+  } catch (err) {
+    if (intento < 5) {
+      programarEscaneoForzado(payload, intento + 1);
+      return;
+    }
+
+    actualizarRegistroPendienteVisual(
+      barcodeLimpio,
+      "No se pudo confirmar aun. Revisa conexion con el servidor."
+    );
+    setStatus(`${barcodeLimpio} sigue pendiente por respuesta del servidor`, "warn");
   }
 }
 
@@ -1782,6 +2236,11 @@ async function refrescarPivot() {
 function refrescarResumenPorVariedad() {
   if (!resumenVariedadBody) return;
 
+  const ordenActual = new Map(
+    Array.from(resumenVariedadBody.querySelectorAll("tr[data-resumen-key]"))
+      .map((tr, index) => [tr.dataset.resumenKey, index])
+  );
+
   if (!viajeActivo || !cacheDetalle.length) {
     resumenVariedadBody.innerHTML = `
       <tr>
@@ -1794,7 +2253,7 @@ function refrescarResumenPorVariedad() {
   const agrupado = {};
 
   cacheDetalle.forEach((row) => {
-    if (!["OK", "REREGISTRADO", "OFFLINE"].includes(row.resultado)) return;
+    if (!["OK", "REREGISTRADO", "OFFLINE", "LOCAL"].includes(row.resultado)) return;
 
     const bloque = String(row.bloque || "N/A").trim();
     const variedad = String(row.variedad || "Sin variedad").trim();
@@ -1805,9 +2264,11 @@ function refrescarResumenPorVariedad() {
     const tipo = String(row.tipo || "").trim();
 
     const key = `${bloque}|${variedad}|${tamano}|${tallos}|${form}|${etapa}|${tipo}`;
+    const resumenKey = encodeURIComponent(key);
 
     if (!agrupado[key]) {
       agrupado[key] = {
+        resumenKey,
         bloque,
         variedad,
         tamano,
@@ -1825,9 +2286,23 @@ function refrescarResumenPorVariedad() {
   });
 
   const filas = Object.values(agrupado).sort((a, b) => {
+    const ordenA = ordenActual.get(a.resumenKey);
+    const ordenB = ordenActual.get(b.resumenKey);
+
+    if (ordenA !== undefined && ordenB !== undefined) {
+      return ordenA - ordenB;
+    }
+
+    if (ordenA !== undefined) return -1;
+    if (ordenB !== undefined) return 1;
+
     if (String(a.bloque) < String(b.bloque)) return -1;
     if (String(a.bloque) > String(b.bloque)) return 1;
-    return String(a.variedad).localeCompare(String(b.variedad));
+    const variedadCompare = String(a.variedad).localeCompare(String(b.variedad));
+    if (variedadCompare !== 0) return variedadCompare;
+    const tamanoCompare = String(a.tamano).localeCompare(String(b.tamano));
+    if (tamanoCompare !== 0) return tamanoCompare;
+    return Number(a.tallos || 0) - Number(b.tallos || 0);
   });
 
   if (!filas.length) {
@@ -1840,7 +2315,7 @@ function refrescarResumenPorVariedad() {
   }
 
   resumenVariedadBody.innerHTML = filas.map((item) => `
-    <tr>
+    <tr data-resumen-key="${item.resumenKey}">
       <td>${item.bloque}</td>
       <td>${item.variedad}</td>
       <td>${item.tamano || "NA"}</td>
@@ -1909,6 +2384,8 @@ function badgeResultado(resultado) {
   if (resultado === "NO_EXISTE") return `<span class="badge badge-bad">NO EXISTE</span>`;
   if (resultado === "REREGISTRADO") return `<span class="badge badge-ok">RE-REGISTRADO</span>`;
   if (resultado === "OFFLINE") return `<span class="badge badge-offline">OFFLINE</span>`;
+  if (resultado === "LOCAL") return `<span class="badge badge-ok">GUARDADO</span>`;
+  if (resultado === "PROCESANDO") return `<span class="badge badge-offline">PROCESANDO</span>`;
   return resultado || "";
 }
 
@@ -1965,9 +2442,13 @@ function renderDetalle(data) {
   visibles.forEach((row) => {
     const fecha = new Date(row.fecha).toLocaleString("es-CO");
 
-    let acciones = row.resultado === "OFFLINE"
-      ? `<span class="badge badge-offline">Pendiente</span>`
+    let acciones = ["OFFLINE", "LOCAL"].includes(row.resultado)
+      ? `<span class="badge badge-offline">Enviando</span>`
       : `<button class="btn-delete" data-barcode="${row.barcode}">Eliminar</button>`;
+
+    if (row.resultado === "PROCESANDO") {
+      acciones = `<span class="badge badge-offline">Esperando</span>`;
+    }
 
     if (row.resultado === "YA_REGISTRADO" && row.puede_reregistrar === true) {
       acciones += ` <button class="btn-primary btn-reregistrar-tabla" data-barcode="${row.barcode}">Re-registrar</button>`;
@@ -2013,30 +2494,33 @@ function renderDetalle(data) {
 }
 
 async function agregarRegistroManualDesdeResumen(data) {
-  if (!viajeActivo) {
+  if (!viajeActivo && data.scope !== "general") {
     setStatus("Debes activar un viaje antes de agregar registros", "warn");
-    return;
+    return false;
   }
 
+  const esConsultaGeneral = data.scope === "general";
   const barcodeTemporal = `MANUAL-${Date.now()}`;
   const actualAntes = Number(totalEscaneados?.textContent || 0);
   const acumuladoAntes = Number(totalAcumuladoGeneral?.textContent || 0);
 
-  setText(totalEscaneados, actualAntes + 1);
-  setAcumuladoSeguro(acumuladoAntes + 1);
+  if (!esConsultaGeneral) {
+    setText(totalEscaneados, actualAntes + 1);
+    setAcumuladoSeguro(acumuladoAntes + 1);
 
-  agregarRegistroProcesadoVisual({
-    barcode: barcodeTemporal,
-    tipo: data.tipo || "",
-    serial: "",
-    bloque: data.bloque,
-    variedad: data.variedad,
-    tamano: data.tamano,
-    tallos: data.tallos,
-    form: data.form,
-    etapa: data.etapa || "Ingreso",
-    observacion: "Agregando manualmente..."
-  }, "OK");
+    agregarRegistroProcesadoVisual({
+      barcode: barcodeTemporal,
+      tipo: data.tipo || "",
+      serial: "",
+      bloque: data.bloque,
+      variedad: data.variedad,
+      tamano: data.tamano,
+      tallos: data.tallos,
+      form: data.form,
+      etapa: data.etapa || "Ingreso",
+      observacion: "Agregando manualmente..."
+    }, "OK");
+  }
 
   setStatus(
     `Agregando: ${data.variedad} / ${data.tamano || "NA"} / ${data.tallos} tallos`,
@@ -2050,25 +2534,28 @@ async function agregarRegistroManualDesdeResumen(data) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        viaje: viajeActivo,
+        viaje: esConsultaGeneral ? "" : viajeActivo,
         bloque: data.bloque,
         variedad: data.variedad,
         tamano: data.tamano,
         tallos: data.tallos,
         form: data.form,
         etapa: data.etapa || "Ingreso",
-        tipo: data.tipo
+        tipo: data.tipo,
+        scope: data.scope || "viaje"
       })
     });
 
     const json = await res.json();
 
     if (!res.ok || !json.ok) {
-      quitarRegistroVisualPorBarcode(barcodeTemporal);
-      setText(totalEscaneados, actualAntes);
-      setAcumuladoSeguro(acumuladoAntes);
+      if (!esConsultaGeneral) {
+        quitarRegistroVisualPorBarcode(barcodeTemporal);
+        setText(totalEscaneados, actualAntes);
+        setAcumuladoSeguro(acumuladoAntes);
+      }
       setStatus(json.error || "No se pudo agregar el registro manual", "error");
-      return;
+      return false;
     }
 
     setStatus(
@@ -2076,29 +2563,39 @@ async function agregarRegistroManualDesdeResumen(data) {
       "ok"
     );
 
-    quitarRegistroVisualPorBarcode(barcodeTemporal);
-    agregarRegistroProcesadoVisual(json.data, "OK");
-    programarRefrescoPostEscaneo();
+    if (!esConsultaGeneral) {
+      quitarRegistroVisualPorBarcode(barcodeTemporal);
+      agregarRegistroProcesadoVisual(json.data, "OK");
+      programarRefrescoPostEscaneo();
+    }
+
+    return true;
   } catch (err) {
-    quitarRegistroVisualPorBarcode(barcodeTemporal);
-    setText(totalEscaneados, actualAntes);
-    setAcumuladoSeguro(acumuladoAntes);
+    if (!esConsultaGeneral) {
+      quitarRegistroVisualPorBarcode(barcodeTemporal);
+      setText(totalEscaneados, actualAntes);
+      setAcumuladoSeguro(acumuladoAntes);
+    }
     console.error("Error agregando registro manual:", err);
     setStatus("Error agregando registro manual", "error");
+    return false;
   }
 }
 async function quitarRegistroManualDesdeResumen(data) {
-  if (!viajeActivo) {
+  if (!viajeActivo && data.scope !== "general") {
     setStatus("Debes activar un viaje antes de quitar registros", "warn");
-    return;
+    return false;
   }
 
+  const esConsultaGeneral = data.scope === "general";
   const actualAntes = Number(totalEscaneados?.textContent || 0);
   const acumuladoAntes = Number(totalAcumuladoGeneral?.textContent || 0);
-  const eliminadoVisual = quitarRegistroVisualPorGrupo(data);
+  const eliminadoVisual = esConsultaGeneral ? null : quitarRegistroVisualPorGrupo(data);
 
-  setText(totalEscaneados, Math.max(0, actualAntes - 1));
-  setAcumuladoSeguro(Math.max(0, acumuladoAntes - 1));
+  if (!esConsultaGeneral) {
+    setText(totalEscaneados, Math.max(0, actualAntes - 1));
+    setAcumuladoSeguro(Math.max(0, acumuladoAntes - 1));
+  }
   setStatus(
     `Quitando: ${data.variedad} / ${data.tamano || "NA"} / ${data.tallos} tallos`,
     "warn"
@@ -2111,14 +2608,15 @@ async function quitarRegistroManualDesdeResumen(data) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        viaje: viajeActivo,
+        viaje: viajeActivo || "",
         bloque: data.bloque,
         variedad: data.variedad,
         tamano: data.tamano,
         tallos: data.tallos,
         form: data.form,
         etapa: data.etapa || "Ingreso",
-        tipo: data.tipo
+        tipo: data.tipo,
+        scope: data.scope || "viaje"
       })
     });
 
@@ -2131,10 +2629,12 @@ async function quitarRegistroManualDesdeResumen(data) {
         refrescarResumenPorVariedad();
       }
 
-      setText(totalEscaneados, actualAntes);
-      setAcumuladoSeguro(acumuladoAntes);
+      if (!esConsultaGeneral) {
+        setText(totalEscaneados, actualAntes);
+        setAcumuladoSeguro(acumuladoAntes);
+      }
       setStatus(json.error || "No se pudo quitar el registro", "error");
-      return;
+      return false;
     }
 
     setStatus(
@@ -2142,7 +2642,10 @@ async function quitarRegistroManualDesdeResumen(data) {
       "ok"
     );
 
-    programarRefrescoPostEscaneo();
+    if (!esConsultaGeneral) {
+      programarRefrescoPostEscaneo();
+    }
+    return true;
 
   } catch (err) {
     if (eliminadoVisual) {
@@ -2151,10 +2654,13 @@ async function quitarRegistroManualDesdeResumen(data) {
       refrescarResumenPorVariedad();
     }
 
-    setText(totalEscaneados, actualAntes);
-    setAcumuladoSeguro(acumuladoAntes);
+    if (!esConsultaGeneral) {
+      setText(totalEscaneados, actualAntes);
+      setAcumuladoSeguro(acumuladoAntes);
+    }
     console.error("Error quitando registro manual:", err);
     setStatus("Error quitando registro manual", "error");
+    return false;
   }
 }
 // =====================================================
@@ -2168,15 +2674,11 @@ async function quitarRegistroManualDesdeResumen(data) {
 let lectorBuffer = "";
 let lectorProcesando = false;
 let colaCodigos = [];
-let lectorAutoSubmitTimer = null;
+let escaneosActivos = 0;
+const MAX_ESCANEOS_PARALELOS = 4;
 
 function limpiarLectorGlobal() {
   lectorBuffer = "";
-
-  if (lectorAutoSubmitTimer) {
-    clearTimeout(lectorAutoSubmitTimer);
-    lectorAutoSubmitTimer = null;
-  }
 
   if (barcodeInput) {
     barcodeInput.value = "";
@@ -2185,33 +2687,6 @@ function limpiarLectorGlobal() {
   if (barcodeVisible) {
     barcodeVisible.textContent = "Esperando escaneo...";
   }
-}
-
-function recibirCodigoDesdeLector(codigoRaw) {
-  const codigo = String(codigoRaw || "")
-    .replace(/[^A-Za-z0-9]/g, "")
-    .toUpperCase()
-    .trim();
-
-  if (!codigo) return;
-
-  limpiarLectorGlobal();
-  encolarCodigo(codigo);
-  setTimeout(focusBarcodeSeguro, 50);
-}
-
-function programarEnvioAutomaticoLector() {
-  if (lectorAutoSubmitTimer) {
-    clearTimeout(lectorAutoSubmitTimer);
-  }
-
-  lectorAutoSubmitTimer = setTimeout(() => {
-    lectorAutoSubmitTimer = null;
-
-    if (lectorBuffer.trim().length >= 2) {
-      recibirCodigoDesdeLector(lectorBuffer);
-    }
-  }, 450);
 }
 
 function mostrarLectorGlobal() {
@@ -2249,6 +2724,50 @@ function obtenerCaracterDesdeTecla(e) {
   return null;
 }
 
+async function registrarEscaneoInstantaneo(codigo) {
+  const barcodeLimpio = normalizarBarcode(codigo);
+
+  if (!viajeActivo) {
+    setStatus("Debes activar un viaje antes de escanear", "warn");
+    return;
+  }
+
+  if (!barcodeLimpio) return;
+
+  try {
+    const yaExisteOffline = await existeRegistroOfflinePendiente(barcodeLimpio);
+
+    if (yaExisteOffline) {
+      setStatus(`${barcodeLimpio} ya esta guardado localmente`, "warn");
+      return;
+    }
+
+    const payload = {
+      barcode: barcodeLimpio,
+      viaje: viajeActivo,
+      form: formInput?.value?.trim() || ""
+    };
+
+    const registroLocal = await guardarRegistroOffline(payload);
+
+    const actual = Number(totalEscaneados?.textContent || 0);
+    setText(totalEscaneados, actual + 1);
+
+    const acumulado = Number(totalAcumuladoGeneral?.textContent || 0);
+    setAcumuladoSeguro(acumulado + 1);
+
+    agregarRegistroOfflineVisual(registroLocal);
+    setStatus(`${barcodeLimpio} guardado. Enviando a la base...`, "ok");
+
+    setTimeout(() => {
+      sincronizarRegistrosOffline();
+    }, 20);
+  } catch (err) {
+    console.error("Error guardando escaneo local:", err);
+    setStatus("No se pudo guardar el escaneo localmente", "error");
+  }
+}
+
 function encolarCodigo(codigoRaw) {
   const codigo = String(codigoRaw || "")
     .replace(/[^A-Za-z0-9]/g, "")
@@ -2256,6 +2775,11 @@ function encolarCodigo(codigoRaw) {
     .trim();
 
   if (!codigo) return;
+
+  if (!viajeActivo) {
+    setStatus("Debes activar un viaje antes de escanear", "warn");
+    return;
+  }
 
   const esNumero = /^\d{2,}$/.test(codigo);
 
@@ -2268,23 +2792,34 @@ function encolarCodigo(codigoRaw) {
     return;
   }
 
-  colaCodigos.push(codigo);
-  procesarColaCodigos();
+  registrarEscaneoInstantaneo(codigo);
 }
-async function procesarColaCodigos() {
-  if (lectorProcesando) return;
+function procesarColaCodigos() {
+  while (colaCodigos.length > 0 && escaneosActivos < MAX_ESCANEOS_PARALELOS) {
+    const item = colaCodigos.shift();
 
-  lectorProcesando = true;
-  escaneando = true;
+    lectorProcesando = true;
+    escaneando = true;
+    escaneosActivos += 1;
 
-  try {
-    while (colaCodigos.length > 0) {
-      const codigo = colaCodigos.shift();
-      await escanearCodigo(codigo);
-    }
-  } finally {
-    lectorProcesando = false;
-    escaneando = false;
+    escanearCodigo(item.codigo, item.viaje)
+      .finally(() => {
+        escaneosActivos -= 1;
+
+        if (colaCodigos.length > 0) {
+          procesarColaCodigos();
+          return;
+        }
+
+        if (escaneosActivos === 0) {
+          lectorProcesando = false;
+          escaneando = false;
+
+          setTimeout(() => {
+            focusBarcodeSeguro();
+          }, 80);
+        }
+      });
   }
 }
 
@@ -2298,7 +2833,6 @@ if (caracter !== null) {
 
   lectorBuffer += caracter;
   mostrarLectorGlobal();
-  programarEnvioAutomaticoLector();
 
   return;
 }
@@ -2329,7 +2863,10 @@ if (caracter !== null) {
     e.preventDefault();
 
     const codigo = lectorBuffer || barcodeInput?.value || "";
-    recibirCodigoDesdeLector(codigo);
+
+    limpiarLectorGlobal();
+
+    encolarCodigo(codigo);
   }
 });
 
@@ -2344,7 +2881,6 @@ if (barcodeInput) {
     if (!valor) return;
 
     lectorBuffer = valor;
-    programarEnvioAutomaticoLector();
 
     if (barcodeVisible) {
       barcodeVisible.textContent = lectorBuffer;
@@ -2357,15 +2893,10 @@ if (barcodeInput) {
     e.preventDefault();
 
     const codigo = lectorBuffer || barcodeInput.value;
-    recibirCodigoDesdeLector(codigo);
-  });
 
-  barcodeInput.addEventListener("paste", (e) => {
-    const textoPegado = e.clipboardData?.getData("text") || "";
-    if (!textoPegado) return;
+    limpiarLectorGlobal();
 
-    e.preventDefault();
-    recibirCodigoDesdeLector(textoPegado);
+    encolarCodigo(codigo);
   });
 }async function refrescarDetalle() {
   if (!detalleBody) return;
@@ -2385,6 +2916,12 @@ if (barcodeInput) {
       `;
     }
 
+    return;
+  }
+
+  if (!mostrandoRegistrosHistoricos && !ultimosRegistrosEstaVisible()) {
+    await pintarPendientesOfflineDelViaje();
+    refrescarResumenPorVariedad();
     return;
   }
 
@@ -2557,19 +3094,18 @@ async function refrescarTodo() {
   await refrescarDetalle();
   await refrescarResumenDesdeBD();
   await recalcularTotalesViajeDesdeDetalle();
+  await cargarContadorGeneralBD();
 
   const bloqueSeleccionado = bloqueGeneralSelect?.value || "";
   const variedadSeleccionada = variedadGeneralSelect?.value || "";
-  const variedadGlobalSeleccionada = variedadGlobalSelect?.value || "";
 
   await cargarBloquesGenerales();
-  await cargarVariedadesGlobales();
 
-  if (!variedadGlobalSeleccionada && bloqueSeleccionado) {
+  if (bloqueSeleccionado) {
     await cargarVariedadesGeneralesPorBloque(bloqueSeleccionado, variedadSeleccionada);
+    await cargarResumenGeneralPorBloque(bloqueSeleccionado, variedadSeleccionada);
+    await cargarDetalleGeneralPorBloque(bloqueSeleccionado, variedadSeleccionada);
   }
-
-  await refrescarConsultaGeneralSeleccionada();
 }
 
 function verDetalleFila(btn) {
@@ -2770,7 +3306,7 @@ function puedeRecuperarFoco() {
 
 
 // CLICK GENERAL
-document.addEventListener("click", (e) => {
+if (false) document.addEventListener("click", (e) => {
 
   const target = e.target;
 
@@ -2806,7 +3342,7 @@ document.addEventListener("click", (e) => {
 });
 
 // AL VOLVER A LA PESTAÑA
-document.addEventListener("visibilitychange", () => {
+if (false) document.addEventListener("visibilitychange", () => {
 
   if (!document.hidden) {
 
@@ -2819,20 +3355,6 @@ document.addEventListener("visibilitychange", () => {
     }, 300);
   }
 });
-
-window.addEventListener("focus", () => {
-  setTimeout(() => {
-    if (!escaneando) {
-      focusBarcodeSeguro();
-    }
-  }, 150);
-});
-
-setInterval(() => {
-  if (!escaneando && puedeRecuperarFoco()) {
-    focusBarcodeSeguro();
-  }
-}, 1000);
 
 async function activarViajeInicialAutomatico() {
   const contenedor = document.getElementById("viajes-botones");
@@ -2882,7 +3404,19 @@ window.addEventListener("load", async () => {
   if (!pedirAcceso()) return;
 
   actualizarEstadoInternet();
-  focusBarcodeSeguro();
+
+  setTimeout(() => {
+    focusBarcodeSeguro();
+  }, 300);
+
+  setInterval(() => {
+    if (escaneando) return;
+    if (!puedeRecuperarFoco()) return;
+
+    if (document.activeElement !== barcodeInput) {
+      focusBarcodeSeguro();
+    }
+  }, 2000);
 
   await cargarContadorGeneralBD();
 await cargarBloquesGenerales();

@@ -1,5 +1,5 @@
 :root {
-  --bg: #1f2933;
+  --bg: #111827;
   --surface: #ffffff;
   --surface-soft: #f7fafc;
   --surface-strong: #e9f3ff;
@@ -22,7 +22,7 @@
 
 body {
   background:
-    linear-gradient(180deg, #111827 0%, #1f2933 48%, #2f3944 100%),
+    linear-gradient(180deg, #0f172a 0%, #111827 48%, #1f2937 100%),
     var(--bg) !important;
   color: var(--ink) !important;
 }
@@ -86,7 +86,7 @@ body {
 }
 
 .topbar {
-  background: rgba(31, 41, 51, 0.94);
+  background: rgba(15, 23, 42, 0.94);
   border-bottom: 1px solid rgba(203, 213, 225, 0.18);
   backdrop-filter: blur(12px);
 }
@@ -135,6 +135,8 @@ button,
 .toggleBtn,
 .btn-add-manual,
 .btn-remove-manual,
+.btn-add-general,
+.btn-remove-general,
 .btn-delete,
 .btn-delete-general {
   border-radius: var(--radius) !important;
@@ -148,6 +150,7 @@ button,
 }
 
 .btn-add-manual,
+.btn-add-general,
 .btn-viaje.activo {
   background: var(--success) !important;
   color: #ffffff !important;
@@ -156,7 +159,8 @@ button,
 .btn-finalizar,
 .btn-delete,
 .btn-delete-general,
-.btn-remove-manual {
+.btn-remove-manual,
+.btn-remove-general {
   background: var(--danger) !important;
   color: #ffffff !important;
 }
@@ -165,6 +169,33 @@ button,
   background: #ffffff !important;
   border: 1px solid var(--line-soft) !important;
   border-radius: var(--radius) !important;
+}
+
+.filter-total-bar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  gap: 10px;
+  margin: 10px 0 12px;
+}
+
+.filter-total-bar > div {
+  background: #123d2b;
+  border: 1px solid rgba(184, 231, 201, 0.24);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.filter-total-bar span {
+  display: block;
+  color: #d7fbe1;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+
+.filter-total-bar strong {
+  color: #ffffff;
+  font-size: 1.8rem;
+  line-height: 1;
 }
 
 thead,
@@ -234,7 +265,7 @@ tbody tr:hover {
 
 /* Tema oscuro operativo */
 body {
-  background: linear-gradient(180deg, #111827 0%, #1f2933 45%, #2f3944 100%) !important;
+  background: linear-gradient(180deg, #0f172a 0%, #111827 45%, #1f2937 100%) !important;
   color: #ecfdf5 !important;
 }
 
@@ -292,14 +323,14 @@ body {
 .field input,
 .field select,
 .scan-input {
-  background: #111827 !important;
+  background: #0b1f18 !important;
   color: #f7fff9 !important;
   border-color: rgba(134, 239, 172, 0.28) !important;
 }
 
 thead,
 th {
-  background: #27313d !important;
+  background: #153628 !important;
 }
 
 th {
