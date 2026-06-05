@@ -303,15 +303,6 @@ app.post("/api/escanear", async (req, res) => {
 
     asegurarViaje(viajeNombre);
 
-    await pool.query(`
-      INSERT INTO sistema_estado (clave, valor, updated_at)
-      VALUES ('viaje_activo', $1, NOW())
-      ON CONFLICT (clave)
-      DO UPDATE SET
-        valor = EXCLUDED.valor,
-        updated_at = NOW()
-    `, [viajeNombre]);
-
     const { barcode, tipo, serial } = codigoParseado;
 
     const tipoRow = await pool.query(
@@ -443,9 +434,9 @@ app.post("/api/reregistrar", async (req, res) => {
       return res.status(400).json({ ok: false, error: "No hay viaje activo" });
     }
 
-    const viaje = asegurarViaje(viajeNombre);
+    const viaje = esGeneral ? null : asegurarViaje(viajeNombre);
 
-    if (!viaje.activa) {
+    if (!esGeneral && !viaje.activa) {
       return res.status(400).json({ ok: false, error: "El viaje está finalizado" });
     }
 
@@ -779,7 +770,7 @@ app.get("/api/general/bloque/:bloque/detalle", async (req, res) => {
 
     query += `
       ORDER BY created_at DESC
-      LIMIT 500
+      LIMIT 150
     `;
 
     const r = await pool.query(query, params);
@@ -996,7 +987,7 @@ app.get("/api/viajes/:nombre/detalle", async (req, res) => {
       WHERE viaje = $1
         AND created_at >= $2::timestamp
       ORDER BY created_at DESC
-      LIMIT 1000
+      LIMIT 200
     `, [nombre, inicio]);
 
     const data = r.rows.map(row => ({
@@ -1275,10 +1266,12 @@ app.post("/api/registros/manual", async (req, res) => {
     const tamanoRaw = String(req.body.tamano || "").trim();
     const form = String(req.body.form || "").trim();
     const etapa = String(req.body.etapa || "Ingreso").trim();
+    const scope = String(req.body.scope || "viaje").trim();
     let tipo = String(req.body.tipo || "").trim();
     const tallos = Number(req.body.tallos || 0);
+    const esGeneral = scope === "general";
 
-    if (!viajeNombre) {
+    if (!viajeNombre && !esGeneral) {
       return res.status(400).json({ ok: false, error: "Falta viaje" });
     }
 
@@ -1286,16 +1279,27 @@ app.post("/api/registros/manual", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Faltan datos del registro manual" });
     }
 
-    const viaje = asegurarViaje(viajeNombre);
+    const viaje = esGeneral ? null : asegurarViaje(viajeNombre);
 
-    if (!viaje.activa) {
+    if (!esGeneral && !viaje.activa) {
       return res.status(400).json({ ok: false, error: "El viaje está finalizado" });
     }
 
     const tamano = tamanoRaw || null;
 
     if (!tipo) {
-      const tipoLookup = await pool.query(`
+      const tipoLookup = esGeneral
+        ? await pool.query(`
+        SELECT tipo
+        FROM public.registros
+        WHERE COALESCE(TRIM(variedad), '') = COALESCE(TRIM($1), '')
+          AND COALESCE(TRIM(CAST(bloque AS text)), '') = COALESCE(TRIM($2), '')
+          AND COALESCE(TRIM(tamano), '') = COALESCE(TRIM($3), '')
+          AND COALESCE(tallos, 0) = $4
+        ORDER BY created_at DESC
+        LIMIT 1
+      `, [variedad, bloque, tamano || "", tallos])
+        : await pool.query(`
         SELECT tipo
         FROM public.registros
         WHERE viaje = $1
@@ -1332,7 +1336,7 @@ app.post("/api/registros/manual", async (req, res) => {
       tamano,
       tallos,
       etapa,
-      viajeNombre,
+      esGeneral ? null : viajeNombre,
       null,
       false,
       form
@@ -1358,9 +1362,11 @@ app.post("/api/registros/manual", async (req, res) => {
       barcode_origen: null
     };
 
-    viaje.historial.unshift(evento);
-    viaje.historialSesion.unshift(evento);
-    viaje.acumulado.ok += 1;
+    if (!esGeneral && viaje) {
+      viaje.historial.unshift(evento);
+      viaje.historialSesion.unshift(evento);
+      viaje.acumulado.ok += 1;
+    }
 
     return res.json({
       ok: true,
@@ -1429,20 +1435,50 @@ app.post("/api/registros/manual/quitar", async (req, res) => {
     const tallos = Number(req.body.tallos || 0);
     const form = String(req.body.form || "").trim();
     const etapa = String(req.body.etapa || "Ingreso").trim();
+    const scope = String(req.body.scope || "viaje").trim();
 
     const tamanoNormalizado =
       !tamanoRaw || tamanoRaw.toUpperCase() === "NA"
         ? ""
         : tamanoRaw;
 
-    if (!viaje || !bloque || !variedad || !tallos) {
+    if ((!viaje && scope !== "general") || !bloque || !variedad || !tallos) {
       return res.status(400).json({
         ok: false,
         error: "Datos incompletos para quitar registro"
       });
     }
 
-    const r = await pool.query(`
+    const r = scope === "general"
+      ? await pool.query(`
+      WITH registro_a_borrar AS (
+        SELECT barcode
+        FROM registros
+        WHERE bloque::text = $1
+          AND LOWER(TRIM(variedad)) = LOWER(TRIM($2))
+          AND COALESCE(NULLIF(TRIM(tamano), 'NA'), '') = COALESCE(NULLIF(TRIM($3), 'NA'), '')
+          AND tallos = $4
+          AND ($5 = '' OR COALESCE(TRIM(form), '') = COALESCE(TRIM($5), ''))
+          AND COALESCE(TRIM(etapa), '') = COALESCE(TRIM($6), '')
+          AND (created_at AT TIME ZONE 'America/Bogota')::date =
+              (NOW() AT TIME ZONE 'America/Bogota')::date
+        ORDER BY created_at DESC
+        LIMIT 1
+      )
+      DELETE FROM registros
+      WHERE barcode IN (
+        SELECT barcode FROM registro_a_borrar
+      )
+      RETURNING barcode;
+    `, [
+        bloque,
+        variedad,
+        tamanoNormalizado,
+        tallos,
+        form,
+        etapa
+      ])
+      : await pool.query(`
       WITH registro_a_borrar AS (
         SELECT barcode
         FROM registros
@@ -1451,7 +1487,7 @@ app.post("/api/registros/manual/quitar", async (req, res) => {
           AND LOWER(TRIM(variedad)) = LOWER(TRIM($3))
           AND COALESCE(NULLIF(TRIM(tamano), 'NA'), '') = COALESCE(NULLIF(TRIM($4), 'NA'), '')
           AND tallos = $5
-          AND COALESCE(TRIM(form), '') = COALESCE(TRIM($6), '')
+          AND ($6 = '' OR COALESCE(TRIM(form), '') = COALESCE(TRIM($6), ''))
           AND COALESCE(TRIM(etapa), '') = COALESCE(TRIM($7), '')
         ORDER BY created_at DESC
         LIMIT 1
@@ -1577,7 +1613,7 @@ app.get("/api/general/variedad/:variedad/detalle", async (req, res) => {
       WHERE variedad = $1
         AND created_at::date = CURRENT_DATE
       ORDER BY created_at DESC
-      LIMIT 300
+      LIMIT 150
     `, [variedad]);
 
     res.json({
@@ -1618,7 +1654,7 @@ app.get("/api/viajes/:nombre/detalle-hoy", async (req, res) => {
         AND (created_at AT TIME ZONE 'America/Bogota')::date =
             (NOW() AT TIME ZONE 'America/Bogota')::date
       ORDER BY created_at DESC
-      LIMIT 1000
+      LIMIT 500
     `, [nombre]);
 
     return res.json({
