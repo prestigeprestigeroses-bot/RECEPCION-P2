@@ -1,5 +1,5 @@
 :root {
-  --bg: #111827;
+  --bg: #06281d;
   --surface: #ffffff;
   --surface-soft: #f7fafc;
   --surface-strong: #e9f3ff;
@@ -22,7 +22,7 @@
 
 body {
   background:
-    linear-gradient(180deg, #0f172a 0%, #111827 48%, #1f2937 100%),
+    linear-gradient(180deg, #031a12 0%, #06281d 42%, #0b3a2b 100%),
     var(--bg) !important;
   color: var(--ink) !important;
 }
@@ -86,8 +86,8 @@ body {
 }
 
 .topbar {
-  background: rgba(15, 23, 42, 0.94);
-  border-bottom: 1px solid rgba(203, 213, 225, 0.18);
+  background: rgba(6, 40, 29, 0.94);
+  border-bottom: 1px solid rgba(184, 231, 201, 0.22);
   backdrop-filter: blur(12px);
 }
 
@@ -96,7 +96,7 @@ body {
 }
 
 .topbar .page-sub {
-  color: #cbd5e1 !important;
+  color: #b8e7c9 !important;
 }
 
 .metric-card.main {
@@ -265,7 +265,7 @@ tbody tr:hover {
 
 /* Tema oscuro operativo */
 body {
-  background: linear-gradient(180deg, #0f172a 0%, #111827 45%, #1f2937 100%) !important;
+  background: linear-gradient(180deg, #02150f 0%, #06281d 45%, #0b3a2b 100%) !important;
   color: #ecfdf5 !important;
 }
 
@@ -280,9 +280,9 @@ body {
 .table-wrap,
 .ya-registrado-item,
 .modal-dup-item {
-  background: #1f2937 !important;
+  background: #10251d !important;
   color: #ecfdf5 !important;
-  border-color: rgba(203, 213, 225, 0.18) !important;
+  border-color: rgba(134, 239, 172, 0.2) !important;
 }
 
 .card h2,

@@ -289,21 +289,11 @@ app.post("/api/escanear", async (req, res) => {
       });
     }
 
-    let codigoParseado;
-
-    try {
-      codigoParseado = parseCode(codeInput);
-    } catch (parseError) {
-      return res.status(400).json({
-        ok: false,
-        resultado: "CODIGO_INVALIDO",
-        error: parseError.message
-      });
-    }
-
     asegurarViaje(viajeNombre);
 
-    const { barcode, tipo, serial } = codigoParseado;
+    const barcode = codeInput;
+    const tipo = codeInput.slice(0, 2);
+    const serial = codeInput.slice(2);
 
     const tipoRow = await pool.query(
       `
@@ -696,6 +686,7 @@ app.get("/api/general/bloque/:bloque", async (req, res) => {
         COALESCE(tamano, '') AS tamano,
         tallos,
         etapa,
+        COALESCE(form, '') AS form,
         COUNT(*)::int AS tabacos,
         COALESCE(SUM(tallos), 0)::int AS suma_tallos
       FROM public.registros
@@ -712,8 +703,8 @@ app.get("/api/general/bloque/:bloque", async (req, res) => {
     }
 
     query += `
-      GROUP BY bloque, variedad, tamano, tallos, etapa
-      ORDER BY variedad, tamano, tallos
+      GROUP BY bloque, variedad, tamano, tallos, etapa, COALESCE(form, '')
+      ORDER BY variedad, tamano, tallos, form
     `;
 
     const r = await pool.query(query, params);
@@ -987,7 +978,7 @@ app.get("/api/viajes/:nombre/detalle", async (req, res) => {
       WHERE viaje = $1
         AND created_at >= $2::timestamp
       ORDER BY created_at DESC
-      LIMIT 200
+      LIMIT 5000
     `, [nombre, inicio]);
 
     const data = r.rows.map(row => ({
@@ -1397,13 +1388,33 @@ app.get("/api/viajes/:nombre/resumen-db", async (req, res) => {
   try {
     const nombre = decodeURIComponent(req.params.nombre);
 
+    const estado = await pool.query(`
+      SELECT
+        MAX(CASE WHEN clave = 'viaje_activo' THEN valor END) AS viaje_activo,
+        MAX(CASE WHEN clave = 'viaje_activo_inicio' THEN valor END) AS inicio
+      FROM sistema_estado
+      WHERE clave IN ('viaje_activo', 'viaje_activo_inicio')
+    `);
+
+    const viajeActivoActual = estado.rows[0]?.viaje_activo;
+    const inicio = estado.rows[0]?.inicio;
+
+    if (viajeActivoActual !== nombre || !inicio) {
+      return res.json({
+        ok: true,
+        data: {
+          ok: 0,
+          reregistrados: 0
+        }
+      });
+    }
+
     const r = await pool.query(`
       SELECT COUNT(*) AS total
       FROM registros
       WHERE viaje = $1
-        AND created_at >= CURRENT_DATE
-        AND created_at < CURRENT_DATE + INTERVAL '1 day'
-    `, [nombre]);
+        AND created_at >= $2::timestamp
+    `, [nombre, inicio]);
 
     return res.json({
       ok: true,
@@ -1416,6 +1427,67 @@ app.get("/api/viajes/:nombre/resumen-db", async (req, res) => {
   } catch (err) {
     console.error("Error resumen-db:", err);
 
+    return res.status(500).json({
+      ok: false,
+      error: err.message
+    });
+  }
+});
+
+app.get("/api/viajes/:nombre/resumen-variedad-db", async (req, res) => {
+  try {
+    const nombre = decodeURIComponent(req.params.nombre);
+
+    const estado = await pool.query(`
+      SELECT
+        MAX(CASE WHEN clave = 'viaje_activo' THEN valor END) AS viaje_activo,
+        MAX(CASE WHEN clave = 'viaje_activo_inicio' THEN valor END) AS inicio
+      FROM sistema_estado
+      WHERE clave IN ('viaje_activo', 'viaje_activo_inicio')
+    `);
+
+    const viajeActivoActual = estado.rows[0]?.viaje_activo;
+    const inicio = estado.rows[0]?.inicio;
+
+    if (viajeActivoActual !== nombre || !inicio) {
+      return res.json({
+        ok: true,
+        data: []
+      });
+    }
+
+    const r = await pool.query(`
+      SELECT
+        COALESCE(CAST(bloque AS text), '') AS bloque,
+        COALESCE(variedad, '') AS variedad,
+        COALESCE(tamano, 'NA') AS tamano,
+        COALESCE(form, '') AS form,
+        COALESCE(etapa, 'Ingreso') AS etapa,
+        COALESCE(tipo, '') AS tipo,
+        COALESCE(tallos, 0)::int AS tallos,
+        COUNT(*)::int AS tabacos,
+        COALESCE(SUM(tallos), 0)::int AS total_tallos
+      FROM registros
+      WHERE viaje = $1
+        AND created_at >= $2::timestamp
+      GROUP BY
+        COALESCE(CAST(bloque AS text), ''),
+        COALESCE(variedad, ''),
+        COALESCE(tamano, 'NA'),
+        COALESCE(form, ''),
+        COALESCE(etapa, 'Ingreso'),
+        COALESCE(tipo, ''),
+        COALESCE(tallos, 0)
+      ORDER BY bloque ASC, variedad ASC, tamano ASC, form ASC
+    `, [nombre, inicio]);
+
+    return res.json({
+      ok: true,
+      data: r.rows
+    });
+
+  } catch (err) {
+    console.error("Error resumen-variedad-db:", err);
     return res.status(500).json({
       ok: false,
       error: err.message
@@ -1569,13 +1641,14 @@ app.get("/api/general/variedad/:variedad", async (req, res) => {
         COALESCE(tamano, 'NA') AS tamano,
         tallos,
         COALESCE(etapa, 'Ingreso') AS etapa,
+        COALESCE(form, '') AS form,
         COUNT(*) AS tabacos,
         SUM(COALESCE(tallos, 0)) AS suma_tallos
       FROM registros
       WHERE variedad = $1
         AND created_at::date = CURRENT_DATE
-      GROUP BY bloque, variedad, COALESCE(tamano, 'NA'), tallos, COALESCE(etapa, 'Ingreso')
-      ORDER BY bloque ASC, variedad ASC, tamano ASC
+      GROUP BY bloque, variedad, COALESCE(tamano, 'NA'), tallos, COALESCE(etapa, 'Ingreso'), COALESCE(form, '')
+      ORDER BY bloque ASC, variedad ASC, tamano ASC, form ASC
     `, [variedad]);
 
     res.json({

@@ -262,7 +262,6 @@ function agregarRegistroProcesadoVisual(data, resultado) {
   };
 
   cacheDetalle.unshift(row);
-  cacheDetalle = cacheDetalle.slice(0, 120);
 
   if (!mostrandoRegistrosHistoricos) {
     renderDetalle(cacheDetalle);
@@ -297,7 +296,6 @@ function agregarRegistroPendienteVisual(barcode, viajeRegistro) {
     observacion: "Procesando registro..."
   });
 
-  cacheDetalle = cacheDetalle.slice(0, 120);
   renderDetalle(cacheDetalle);
 }
 
@@ -373,23 +371,6 @@ function normalizarBarcode(valor) {
     .replace(/[^A-Za-z0-9]/g, "")
     .toUpperCase()
     .trim();
-}
-
-function separarBarcode(barcode) {
-  const codigo = normalizarBarcode(barcode);
-  const tipoLetraNumero = codigo.match(/^([A-Z]\d)(\d*)$/);
-
-  if (tipoLetraNumero) {
-    return {
-      tipo: tipoLetraNumero[1],
-      serial: tipoLetraNumero[2] || ""
-    };
-  }
-
-  return {
-    tipo: codigo.slice(0, 2),
-    serial: codigo.slice(2)
-  };
 }
 // =====================================================
 // BASE LOCAL OFFLINE - INDEXEDDB
@@ -554,7 +535,8 @@ async function cargarCatalogoTiposOffline() {
 
 function obtenerDatosOfflinePorBarcode(barcode) {
   const codigo = normalizarBarcode(barcode);
-  const { tipo, serial } = separarBarcode(codigo);
+  const tipo = codigo.slice(0, 2);
+  const serial = codigo.slice(2);
   const datos = obtenerTiposCache()[tipo] || {};
 
   return {
@@ -795,6 +777,7 @@ function setAcumuladoSeguro(valor) {
 
 function focusBarcodeSeguro() {
   if (!barcodeInput) return;
+  if (!puedeRecuperarFoco()) return;
 
   const activo = document.activeElement;
   const tag = activo?.tagName?.toLowerCase();
@@ -814,6 +797,35 @@ function focusBarcodeSeguro() {
 
 function focusBarcodeSinScroll() {
   focusBarcodeSeguro();
+}
+
+function recuperarLectorDespuesDeControl(control) {
+  setTimeout(() => {
+    try {
+      control?.blur?.();
+    } catch (e) {
+      // Si el control ya no existe, solo intenta recuperar el lector.
+    }
+
+    activarLectorAutomatico(8, 120);
+  }, 80);
+}
+
+function activarLectorAutomatico(intentos = 8, intervalo = 180) {
+  let intentosHechos = 0;
+
+  const intentar = () => {
+    intentosHechos += 1;
+    focusBarcodeSeguro();
+
+    if (document.activeElement === barcodeInput || intentosHechos >= intentos) {
+      return;
+    }
+
+    setTimeout(intentar, intervalo);
+  };
+
+  intentar();
 }
 
 function conservarPosicionPantalla(fn) {
@@ -944,7 +956,7 @@ function limpiarConsultaGeneral() {
 
   setHTML(generalBloqueBody, `
     <tr>
-      <td colspan="8" class="empty-row">Selecciona un bloque o variedad para consultar.</td>
+      <td colspan="9" class="empty-row">Selecciona un bloque o variedad para consultar.</td>
     </tr>
   `);
   limpiarTotalesResumenGeneral();
@@ -1086,6 +1098,7 @@ function renderResumenGeneralFiltro(rows) {
       <td>${row.tamano ?? ""}</td>
       <td>${row.tallos ?? ""}</td>
       <td>${row.etapa ?? ""}</td>
+      <td>${row.form || "-"}</td>
       <td class="cell-green" data-general-tabacos>${row.tabacos ?? 0}</td>
       <td class="cell-blue" data-general-suma>${row.suma_tallos ?? 0}</td>
       <td>
@@ -1096,6 +1109,7 @@ function renderResumenGeneralFiltro(rows) {
           data-tamano="${row.tamano ?? ""}"
           data-tallos="${tallos}"
           data-etapa="${row.etapa || "Ingreso"}"
+          data-form="${row.form || ""}"
           title="Agregar un registro igual"
         >+</button>
 
@@ -1106,6 +1120,7 @@ function renderResumenGeneralFiltro(rows) {
           data-tamano="${row.tamano ?? ""}"
           data-tallos="${tallos}"
           data-etapa="${row.etapa || "Ingreso"}"
+          data-form="${row.form || ""}"
           title="Quitar un registro igual"
         >-</button>
       </td>
@@ -1169,7 +1184,7 @@ function datosResumenGeneralDesdeBoton(btn) {
     tamano: btn.dataset.tamano,
     tallos: Number(btn.dataset.tallos || 0),
     etapa: btn.dataset.etapa || "Ingreso",
-    form: "",
+    form: btn.dataset.form || "",
     tipo: "",
     scope: "general"
   };
@@ -1239,7 +1254,7 @@ async function cargarResumenGeneralPorBloque(bloque, variedad = "") {
       limpiarTotalesResumenGeneral();
       setHTML(generalBloqueBody, `
         <tr>
-          <td colspan="8" class="empty-row">Error cargando el resumen del bloque.</td>
+          <td colspan="9" class="empty-row">Error cargando el resumen del bloque.</td>
         </tr>
       `);
       return;
@@ -1251,7 +1266,7 @@ async function cargarResumenGeneralPorBloque(bloque, variedad = "") {
       limpiarTotalesResumenGeneral();
       setHTML(generalBloqueBody, `
         <tr>
-          <td colspan="8" class="empty-row">No hay datos para este filtro.</td>
+          <td colspan="9" class="empty-row">No hay datos para este filtro.</td>
         </tr>
       `);
       return;
@@ -1262,7 +1277,7 @@ async function cargarResumenGeneralPorBloque(bloque, variedad = "") {
     limpiarTotalesResumenGeneral();
     setHTML(generalBloqueBody, `
       <tr>
-        <td colspan="8" class="empty-row">Error cargando el resumen del bloque.</td>
+        <td colspan="9" class="empty-row">Error cargando el resumen del bloque.</td>
       </tr>
     `);
   }
@@ -1375,7 +1390,7 @@ async function cargarResumenGeneralPorVariedadGlobal(variedad) {
 
       setHTML(generalBloqueBody, `
         <tr>
-          <td colspan="8" class="empty-row">Error cargando el resumen de la variedad.</td>
+          <td colspan="9" class="empty-row">Error cargando el resumen de la variedad.</td>
         </tr>
       `);
       return;
@@ -1389,7 +1404,7 @@ async function cargarResumenGeneralPorVariedadGlobal(variedad) {
 
       setHTML(generalBloqueBody, `
         <tr>
-          <td colspan="8" class="empty-row">No hay datos para esta variedad.</td>
+          <td colspan="9" class="empty-row">No hay datos para esta variedad.</td>
         </tr>
       `);
       return;
@@ -1415,7 +1430,7 @@ async function cargarResumenGeneralPorVariedadGlobal(variedad) {
 
     setHTML(generalBloqueBody, `
       <tr>
-        <td colspan="8" class="empty-row">Error cargando el resumen de la variedad.</td>
+        <td colspan="9" class="empty-row">Error cargando el resumen de la variedad.</td>
       </tr>
     `);
   }
@@ -2168,6 +2183,7 @@ async function refrescarResumenDesdeBD() {
     const rereg = Number(row.reregistrados || 0);
 
     await actualizarTotalesConPendientesOffline(null, ok + rereg);
+    await refrescarResumenPorVariedadDesdeBD();
   } catch (err) {
     console.error("Error refrescando resumen DB:", err);
   }
@@ -2241,12 +2257,17 @@ function refrescarResumenPorVariedad() {
       .map((tr, index) => [tr.dataset.resumenKey, index])
   );
 
-  if (!viajeActivo || !cacheDetalle.length) {
+  if (!viajeActivo) {
     resumenVariedadBody.innerHTML = `
       <tr>
         <td colspan="7" class="empty-row">Sin registros por variedad.</td>
       </tr>
     `;
+    return;
+  }
+
+  if (!cacheDetalle.length) {
+    refrescarResumenPorVariedadDesdeBD();
     return;
   }
 
@@ -2378,6 +2399,118 @@ function refrescarResumenPorVariedad() {
 });
 }
 
+async function refrescarResumenPorVariedadDesdeBD() {
+  if (!resumenVariedadBody || !viajeActivo) return;
+
+  try {
+    const res = await fetch(`/api/viajes/${encodeURIComponent(viajeActivo)}/resumen-variedad-db`);
+    if (!res.ok) return;
+
+    const json = await res.json();
+    if (!json.ok || !Array.isArray(json.data) || !json.data.length) {
+      if (!cacheDetalle.length) {
+        resumenVariedadBody.innerHTML = `
+          <tr>
+            <td colspan="7" class="empty-row">Sin registros por variedad.</td>
+          </tr>
+        `;
+      }
+      return;
+    }
+
+    const filas = json.data.map((row) => {
+      const key = [
+        row.bloque || "",
+        row.variedad || "",
+        row.tamano || "NA",
+        Number(row.tallos || 0),
+        row.form || "",
+        row.etapa || "Ingreso",
+        row.tipo || ""
+      ].join("|");
+
+      return {
+        resumenKey: encodeURIComponent(key),
+        bloque: row.bloque || "",
+        variedad: row.variedad || "",
+        tamano: row.tamano || "NA",
+        tallos: Number(row.tallos || 0),
+        form: row.form || "",
+        etapa: row.etapa || "Ingreso",
+        tipo: row.tipo || "",
+        tabacos: Number(row.tabacos || 0),
+        totalTallos: Number(row.total_tallos || 0)
+      };
+    });
+
+    resumenVariedadBody.innerHTML = filas.map((item) => `
+      <tr data-resumen-key="${item.resumenKey}">
+        <td>${item.bloque}</td>
+        <td>${item.variedad}</td>
+        <td>${item.tamano || "NA"}</td>
+        <td>${item.form || "-"}</td>
+        <td class="cell-green">${item.tabacos}</td>
+        <td class="cell-blue">${item.totalTallos}</td>
+        <td>
+          <button
+            class="btn-add-manual"
+            data-bloque="${item.bloque}"
+            data-variedad="${item.variedad}"
+            data-tamano="${item.tamano || ""}"
+            data-tallos="${item.tallos}"
+            data-form="${item.form || ""}"
+            data-etapa="${item.etapa || "Ingreso"}"
+            data-tipo="${item.tipo || ""}"
+            title="Agregar un registro igual"
+          >+</button>
+
+          <button
+            class="btn-remove-manual"
+            data-bloque="${item.bloque}"
+            data-variedad="${item.variedad}"
+            data-tamano="${item.tamano || ""}"
+            data-tallos="${item.tallos}"
+            data-form="${item.form || ""}"
+            data-etapa="${item.etapa || "Ingreso"}"
+            data-tipo="${item.tipo || ""}"
+            title="Quitar un registro igual"
+          >-</button>
+        </td>
+      </tr>
+    `).join("");
+
+    resumenVariedadBody.querySelectorAll(".btn-add-manual").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        await agregarRegistroManualDesdeResumen({
+          bloque: btn.dataset.bloque,
+          variedad: btn.dataset.variedad,
+          tamano: btn.dataset.tamano,
+          tallos: Number(btn.dataset.tallos || 0),
+          form: btn.dataset.form,
+          etapa: btn.dataset.etapa,
+          tipo: btn.dataset.tipo
+        });
+      });
+    });
+
+    resumenVariedadBody.querySelectorAll(".btn-remove-manual").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        await quitarRegistroManualDesdeResumen({
+          bloque: btn.dataset.bloque,
+          variedad: btn.dataset.variedad,
+          tamano: btn.dataset.tamano,
+          tallos: Number(btn.dataset.tallos || 0),
+          form: btn.dataset.form,
+          etapa: btn.dataset.etapa,
+          tipo: btn.dataset.tipo
+        });
+      });
+    });
+  } catch (err) {
+    console.error("Error refrescando resumen por variedad desde BD:", err);
+  }
+}
+
 function badgeResultado(resultado) {
   if (resultado === "OK") return `<span class="badge badge-ok">OK</span>`;
   if (resultado === "YA_REGISTRADO") return `<span class="badge badge-dup">YA REGISTRADO</span>`;
@@ -2426,7 +2559,7 @@ function renderYaRegistrados(data = null) {
 function renderDetalle(data) {
   if (!detalleBody) return;
 
-  const visibles = data || [];
+  const visibles = (data || []).slice(0, 300);
 
   if (!visibles.length) {
     setHTML(detalleBody, `
@@ -3205,74 +3338,86 @@ if (ocultarRegistrosViajeBtn) {
 
 if (variedadGeneralSelect) {
   variedadGeneralSelect.addEventListener("change", async () => {
-    const bloque = bloqueGeneralSelect?.value || "";
-    const variedad = variedadGeneralSelect.value;
+    try {
+      const bloque = bloqueGeneralSelect?.value || "";
+      const variedad = variedadGeneralSelect.value;
 
-    limpiarTotalesVariedadGlobal();
+      limpiarTotalesVariedadGlobal();
 
-    if (variedadGlobalSelect) {
-      variedadGlobalSelect.value = "";
+      if (variedadGlobalSelect) {
+        variedadGlobalSelect.value = "";
+      }
+
+      guardarEstadoUI();
+
+      await cargarResumenGeneralPorBloque(bloque, variedad);
+      await cargarDetalleGeneralPorBloque(bloque, variedad);
+    } finally {
+      recuperarLectorDespuesDeControl(variedadGeneralSelect);
     }
-
-    guardarEstadoUI();
-
-    await cargarResumenGeneralPorBloque(bloque, variedad);
-    await cargarDetalleGeneralPorBloque(bloque, variedad);
   });
 }
 if (bloqueGeneralSelect) {
   bloqueGeneralSelect.addEventListener("change", async () => {
-    const bloque = bloqueGeneralSelect.value;
+    try {
+      const bloque = bloqueGeneralSelect.value;
 
-    limpiarTotalesVariedadGlobal();
+      limpiarTotalesVariedadGlobal();
 
-    if (variedadGlobalSelect) {
-      variedadGlobalSelect.value = "";
+      if (variedadGlobalSelect) {
+        variedadGlobalSelect.value = "";
+      }
+
+      if (!bloque) {
+        limpiarConsultaGeneral();
+        return;
+      }
+
+      guardarEstadoUI();
+
+      await cargarVariedadesGeneralesPorBloque(bloque, "");
+
+      if (variedadGeneralSelect) {
+        variedadGeneralSelect.value = "";
+      }
+
+      await cargarResumenGeneralPorBloque(bloque, "");
+      await cargarDetalleGeneralPorBloque(bloque, "");
+    } finally {
+      recuperarLectorDespuesDeControl(bloqueGeneralSelect);
     }
-
-    if (!bloque) {
-      limpiarConsultaGeneral();
-      return;
-    }
-
-    guardarEstadoUI();
-
-    await cargarVariedadesGeneralesPorBloque(bloque, "");
-
-    if (variedadGeneralSelect) {
-      variedadGeneralSelect.value = "";
-    }
-
-    await cargarResumenGeneralPorBloque(bloque, "");
-    await cargarDetalleGeneralPorBloque(bloque, "");
   });
 }
 if (variedadGlobalSelect) {
   variedadGlobalSelect.addEventListener("change", async () => {
-    const variedad = variedadGlobalSelect.value || "";
+    try {
+      const variedad = variedadGlobalSelect.value || "";
 
-    if (!variedad) {
-      limpiarTotalesVariedadGlobal();
-      limpiarConsultaGeneral();
-      return;
+      if (!variedad) {
+        limpiarTotalesVariedadGlobal();
+        limpiarConsultaGeneral();
+        return;
+      }
+
+      if (bloqueGeneralSelect) {
+        bloqueGeneralSelect.value = "";
+      }
+
+      if (variedadGeneralSelect) {
+        variedadGeneralSelect.innerHTML = `
+          <option value="">Seleccionar variedad</option>
+        `;
+      }
+
+      guardarEstadoUI();
+
+      await conservarPosicionPantalla(async () => {
+        await cargarResumenGeneralPorVariedadGlobal(variedad);
+        await cargarDetalleGeneralPorVariedadGlobal(variedad);
+      });
+    } finally {
+      recuperarLectorDespuesDeControl(variedadGlobalSelect);
     }
-
-    if (bloqueGeneralSelect) {
-      bloqueGeneralSelect.value = "";
-    }
-
-    if (variedadGeneralSelect) {
-      variedadGeneralSelect.innerHTML = `
-        <option value="">Seleccionar variedad</option>
-      `;
-    }
-
-    guardarEstadoUI();
-
-    await conservarPosicionPantalla(async () => {
-      await cargarResumenGeneralPorVariedadGlobal(variedad);
-      await cargarDetalleGeneralPorVariedadGlobal(variedad);
-    });
   });
 }
 /////////////////////// AUTOFOCUS ESCANER ///////////////////////////////
@@ -3356,6 +3501,34 @@ if (false) document.addEventListener("visibilitychange", () => {
   }
 });
 
+document.addEventListener("pointerup", (e) => {
+  const target = e.target;
+  if (!target) return;
+
+  const tag = target.tagName?.toLowerCase();
+
+  if (tag === "select" || tag === "option" || tag === "textarea") return;
+  if (tag === "input" && target !== barcodeInput) return;
+
+  setTimeout(() => {
+    if (!escaneando) focusBarcodeSeguro();
+  }, 120);
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+
+  setTimeout(() => {
+    if (!escaneando) activarLectorAutomatico(5, 180);
+  }, 200);
+});
+
+window.addEventListener("focus", () => {
+  setTimeout(() => {
+    if (!escaneando) activarLectorAutomatico(5, 180);
+  }, 150);
+});
+
 async function activarViajeInicialAutomatico() {
   const contenedor = document.getElementById("viajes-botones");
   if (!contenedor) return;
@@ -3384,6 +3557,7 @@ async function activarViajeInicialAutomatico() {
   }
 
   await activarViaje(nombreViaje);
+  activarLectorAutomatico(6, 180);
 }
 function actualizarEstadoInternet() {
   if (!internetStatus) return;
@@ -3406,8 +3580,8 @@ window.addEventListener("load", async () => {
   actualizarEstadoInternet();
 
   setTimeout(() => {
-    focusBarcodeSeguro();
-  }, 300);
+    activarLectorAutomatico(12, 180);
+  }, 150);
 
   setInterval(() => {
     if (escaneando) return;
